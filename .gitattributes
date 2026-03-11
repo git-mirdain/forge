@@ -1,0 +1,11 @@
+.config/committed.toml vendor=git-vendor
+.config/deny.toml vendor=git-vendor
+.config/pre-commit.yaml vendor=git-vendor
+.config/release-please-config.json vendor=git-vendor
+.config/release-please-manifest.json vendor=git-vendor
+.config/rumdl.toml vendor=git-vendor
+.config/typos.toml vendor=git-vendor
+.github/workflows/CD.yml vendor=git-vendor
+.github/workflows/CI.yml vendor=git-vendor
+.github/workflows/Lint.yml vendor=git-vendor
+.github/workflows/Version.yml vendor=git-vendor
