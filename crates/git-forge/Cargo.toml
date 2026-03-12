@@ -4,8 +4,15 @@ version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
+description = "Local-first infrastructure for Git forges."
+
+[[bin]]
+name = "git-forge"
+path = "src/main.rs"
 
 [dependencies]
+clap = { workspace = true }
+clap_mangen = { workspace = true }
 
 [lints]
 workspace = true
