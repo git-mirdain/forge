@@ -3,4 +3,5 @@
 pub mod annotations;
 pub mod cli;
 pub mod counters;
+pub mod entities;
 pub mod exe;
