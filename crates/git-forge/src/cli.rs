@@ -1,6 +1,7 @@
 //! The CLI definitions for the top-level `git forge` command.
 
 pub mod issue;
+pub mod review;
 
 use clap::{Parser, Subcommand};
 
@@ -19,6 +20,11 @@ pub enum Commands {
     /// Work with issues.
     Issue {
         #[command(subcommand)]
-        verb: issue::IssueVerb,
+        command: issue::IssueCommand,
+    },
+    /// Work with pull/merge request reviews.
+    Review {
+        #[command(subcommand)]
+        command: review::ReviewCommand,
     },
 }
