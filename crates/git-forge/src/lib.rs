@@ -5,5 +5,6 @@ pub mod annotations;
 pub mod checks;
 pub mod cli;
 pub mod counters;
+pub mod enforcement;
 pub mod entities;
 pub mod exe;
