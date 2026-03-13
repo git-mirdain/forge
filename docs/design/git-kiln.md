@@ -1,7 +1,7 @@
 +++
 title = "Kiln: A Content-Addressed Build Engine Backed by Git"
 subtitle = "Design Specification"
-version = "0.1.0"
+version = "0.0.0"
 date = 2026-03-11
 status = "Draft"
 summary = """
