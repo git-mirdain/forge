@@ -1,5 +1,6 @@
 //! Local-first infrastructure for Git forges.
 
+pub mod access;
 pub mod annotations;
 pub mod checks;
 pub mod cli;
