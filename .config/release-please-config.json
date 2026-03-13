@@ -10,7 +10,7 @@
   "pull-request-title-pattern": "release: `${component}` v${version}",
   "pull-request-footer": "This release was generated with [Release Please](https://github.com/googleapis/release-please).",
   "packages": {
-    "crates/git-forge": {}
+    "crates/git-kiln": {}
   },
   "plugins": [{ "type": "sentence-case" }, { "type": "cargo-workspace" }],
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"

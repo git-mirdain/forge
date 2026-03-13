@@ -129,7 +129,7 @@ jobs:
             ${{ runner.os }}-cargo-build-
       - name: Generate man pages
         run: |
-          cargo run --package git-forge -- --generate-man target/debug/man
+          cargo run --package git-kiln -- --generate-man target/debug/man
 
   ci:
     name: CI
