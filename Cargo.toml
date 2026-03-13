@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/git-forge"]
+members = ["crates/forge-benchmarks","crates/git-forge"]
 
 [workspace.package]
 edition = "2024"

@@ -1,3 +1,4 @@
 {
-  "crates/git-forge": "0.0.0"
+  "crates/git-forge": "0.0.0",
+  "crates/forge-benchmarks": "0.0.0"
 }
