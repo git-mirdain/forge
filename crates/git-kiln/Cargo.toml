@@ -6,5 +6,13 @@ publish.workspace = true
 license.workspace = true
 description = "A ceramic-inspired toolkit for shaping Git-native data."
 
+[[bin]]
+name = "git-kiln"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+clap_mangen = { workspace = true }
+
 [lints]
 workspace = true

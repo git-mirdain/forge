@@ -14,3 +14,7 @@ missing_docs = "warn"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[workspace.dependencies]
+clap = { version = "4.5.60", features = ["derive"] }
+clap_mangen = "0.2.31"
