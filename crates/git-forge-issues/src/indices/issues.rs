@@ -15,7 +15,7 @@
 //! issue's audit log.
 //!
 //! Issue comments are conversation within the issue. They are not the same as
-//! code comments — those live in [`crate::annotations::comments`].
+//! code comments — those live in `git_forge_core::metadata::comments`.
 
 pub mod git2;
 
@@ -117,8 +117,6 @@ pub trait Issues {
     fn find_issue(&self, id: u64) -> Result<Option<Issue>, ::git2::Error>;
 
     /// Create a new issue, returning the assigned ID.
-    ///
-    /// Calls [`crate::counters::EntityCounter::increment_counter`] internally.
     fn create_issue(&self, issue: &NewIssue) -> Result<u64, ::git2::Error>;
 
     /// Apply `update` to the issue identified by `id`.

@@ -1,0 +1,13 @@
+[package]
+name = "git-forge-release"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Release management domain for git-forge."
+
+[dependencies]
+clap = { workspace = true }
+
+[lints]
+workspace = true

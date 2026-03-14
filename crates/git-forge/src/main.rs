@@ -2,7 +2,6 @@
 
 use clap::{CommandFactory, Parser};
 use git_forge::cli::{Cli, Commands};
-use git_forge::exe;
 use std::path::PathBuf;
 use std::process;
 
@@ -18,9 +17,9 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Issue { command } => exe::issue::run(command),
-        Commands::Review { command } => exe::review::run(command),
-        Commands::Release { command } => exe::release::run(command),
+        Commands::Issue { command } => git_forge_issues::exe::run(command),
+        Commands::Review { command } => git_forge_review::exe::run(command),
+        Commands::Release { command } => git_forge_release::exe::run(command),
     }
 }
 

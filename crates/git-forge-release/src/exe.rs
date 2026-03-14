@@ -1,6 +1,6 @@
 //! Execution logic for `git forge release`.
 
-use crate::cli::release::ReleaseCommand;
+use crate::cli::ReleaseCommand;
 
 /// Execute a `release` subcommand.
 pub fn run(command: ReleaseCommand) {

@@ -1,10 +1,9 @@
 //! The CLI definitions for the top-level `git forge` command.
 
-pub mod issue;
-pub mod release;
-pub mod review;
-
 use clap::{Parser, Subcommand};
+use git_forge_issues::cli::IssueCommand;
+use git_forge_release::cli::ReleaseCommand;
+use git_forge_review::cli::ReviewCommand;
 
 /// Local-first infrastructure for Git forges.
 #[derive(Parser)]
@@ -23,18 +22,18 @@ pub enum Commands {
     Issue {
         /// The issue subcommand to run.
         #[command(subcommand)]
-        command: issue::IssueCommand,
+        command: IssueCommand,
     },
     /// Work with pull/merge request reviews.
     Review {
         /// The review subcommand to run.
         #[command(subcommand)]
-        command: review::ReviewCommand,
+        command: ReviewCommand,
     },
     /// Work with releases.
     Release {
         /// The release subcommand to run.
         #[command(subcommand)]
-        command: release::ReleaseCommand,
+        command: ReleaseCommand,
     },
 }

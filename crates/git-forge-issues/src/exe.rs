@@ -1,6 +1,6 @@
 //! Execution logic for `git forge issue`.
 
-use crate::cli::issue::IssueCommand;
+use crate::cli::IssueCommand;
 
 /// Execute an `issue` subcommand.
 pub fn run(command: IssueCommand) {

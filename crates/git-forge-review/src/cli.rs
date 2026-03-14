@@ -1,8 +1,8 @@
-//! CLI definitions for `git forge release`.
+//! CLI definitions for `git forge review`.
 
 use clap::Subcommand;
 
-/// Commands for `git forge review`.
+/// Subcommands for `git forge review`.
 #[derive(Subcommand)]
 pub enum ReviewCommand {
     /// Open a new review.

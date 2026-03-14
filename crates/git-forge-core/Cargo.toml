@@ -1,0 +1,13 @@
+[package]
+name = "git-forge-core"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Shared annotations for git-forge: comments and approvals."
+
+[dependencies]
+git2 = { workspace = true }
+
+[lints]
+workspace = true

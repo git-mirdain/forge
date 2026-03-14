@@ -2,7 +2,7 @@
 
 use git2::Repository;
 
-use crate::annotations::comments::{Comment, Comments, NewComment, Reanchor};
+use crate::metadata::comments::{Comment, Comments, NewComment, Reanchor};
 
 impl Comments for Repository {
     fn comments_on_blob(&self, _blob_oid: git2::Oid) -> Result<Vec<Comment>, git2::Error> {

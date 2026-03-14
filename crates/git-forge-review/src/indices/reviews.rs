@@ -17,10 +17,10 @@
 //! the review's audit log.
 //!
 //! A review does not contain comments or approvals — it prompts them. Comments
-//! land on blob OIDs via [`crate::annotations::comments`]. Approvals land on
-//! patch-ids and OIDs via [`crate::annotations::approvals`]. The review is how
-//! you discover which commits to look at; the annotations are what you find
-//! when you look.
+//! land on blob OIDs via `git_forge_core::metadata::comments`. Approvals land
+//! on patch-ids and OIDs via `git_forge_core::metadata::approvals`. The review
+//! is how you discover which commits to look at; the annotations are what you
+//! find when you look.
 
 pub mod git2;
 
@@ -124,8 +124,6 @@ pub trait Reviews {
     fn find_review(&self, id: u64) -> Result<Option<Review>, ::git2::Error>;
 
     /// Create a new review, returning the assigned ID.
-    ///
-    /// Calls [`crate::counters::EntityCounter::increment_counter`] internally.
     fn create_review(&self, review: &NewReview) -> Result<u64, ::git2::Error>;
 
     /// Apply `update` to the review identified by `id`.

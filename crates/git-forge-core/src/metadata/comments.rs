@@ -19,6 +19,8 @@
 //! may prompt someone to leave a comment, but the comment exists independently
 //! and persists as long as the code it describes exists.
 
+pub mod git2;
+
 /// The ref under which all comment metadata is stored (fanout by blob OID).
 pub const COMMENTS_REF: &str = "refs/metadata/comments";
 
@@ -61,7 +63,7 @@ pub struct Comment {
     /// Stable identifier for this comment (unique within the blob).
     pub id: String,
     /// The blob OID the comment is currently anchored to.
-    pub blob_oid: git2::Oid,
+    pub blob_oid: ::git2::Oid,
     /// The line range within the blob.
     pub range: LineRange,
     /// A few lines of surrounding context used as a fallback for reanchoring
@@ -83,7 +85,7 @@ pub struct Comment {
 #[derive(Clone, Debug)]
 pub struct NewComment {
     /// The blob OID to anchor the comment to.
-    pub blob_oid: git2::Oid,
+    pub blob_oid: ::git2::Oid,
     /// The line range within the blob.
     pub range: LineRange,
     /// Lines of surrounding context for reanchoring fallback.
@@ -98,9 +100,9 @@ pub struct Reanchor {
     /// The comment ID being reanchored.
     pub comment_id: String,
     /// The old blob OID the comment was anchored to.
-    pub old_blob_oid: git2::Oid,
+    pub old_blob_oid: ::git2::Oid,
     /// The new blob OID to anchor to.
-    pub new_blob_oid: git2::Oid,
+    pub new_blob_oid: ::git2::Oid,
     /// The updated line range in the new blob.
     pub new_range: LineRange,
 }
@@ -108,38 +110,42 @@ pub struct Reanchor {
 /// Operations on code comments stored under [`COMMENTS_REF`].
 pub trait Comments {
     /// Return all comments anchored to `blob_oid`.
-    fn comments_on_blob(&self, blob_oid: git2::Oid) -> Result<Vec<Comment>, git2::Error>;
+    fn comments_on_blob(&self, blob_oid: ::git2::Oid) -> Result<Vec<Comment>, ::git2::Error>;
 
     /// Return the comment with `id` anchored to `blob_oid`, or `None` if it
     /// does not exist.
-    fn find_comment(&self, blob_oid: git2::Oid, id: &str) -> Result<Option<Comment>, git2::Error>;
+    fn find_comment(
+        &self,
+        blob_oid: ::git2::Oid,
+        id: &str,
+    ) -> Result<Option<Comment>, ::git2::Error>;
 
     /// Leave a new comment, returning the assigned comment ID.
-    fn add_comment(&self, comment: &NewComment) -> Result<String, git2::Error>;
+    fn add_comment(&self, comment: &NewComment) -> Result<String, ::git2::Error>;
 
     /// Add a reply to an existing comment thread.
     fn reply_to_comment(
         &self,
-        blob_oid: git2::Oid,
+        blob_oid: ::git2::Oid,
         comment_id: &str,
         author: &str,
         body: &str,
-    ) -> Result<(), git2::Error>;
+    ) -> Result<(), ::git2::Error>;
 
     /// Mark a comment as resolved.
     fn resolve_comment(
         &self,
-        blob_oid: git2::Oid,
+        blob_oid: ::git2::Oid,
         comment_id: &str,
         resolver: &str,
-    ) -> Result<(), git2::Error>;
+    ) -> Result<(), ::git2::Error>;
 
     /// Reanchor a comment from its current blob OID to a new one after the
     /// file was modified. Writes a new metadata commit recording the updated
     /// anchor.
-    fn reanchor_comment(&self, reanchor: &Reanchor) -> Result<(), git2::Error>;
+    fn reanchor_comment(&self, reanchor: &Reanchor) -> Result<(), ::git2::Error>;
 
     /// Return all comments whose blob OID no longer appears in any file
     /// reachable from `HEAD`. These are "orphaned" comments.
-    fn orphaned_comments(&self) -> Result<Vec<Comment>, git2::Error>;
+    fn orphaned_comments(&self) -> Result<Vec<Comment>, ::git2::Error>;
 }

@@ -176,6 +176,39 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "clap_mangen",
+ "git-forge-core",
+ "git-forge-issues",
+ "git-forge-release",
+ "git-forge-review",
+]
+
+[[package]]
+name = "git-forge-core"
+version = "0.0.0"
+dependencies = [
+ "git2",
+]
+
+[[package]]
+name = "git-forge-issues"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "git2",
+]
+
+[[package]]
+name = "git-forge-release"
+version = "0.0.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
+name = "git-forge-review"
+version = "0.0.0"
+dependencies = [
+ "clap",
  "git2",
 ]
 

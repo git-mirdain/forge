@@ -1,6 +1,6 @@
 //! Execution logic for `git forge review`.
 
-use crate::cli::review::ReviewCommand;
+use crate::cli::ReviewCommand;
 
 /// Execute a `review` subcommand.
 pub fn run(command: ReviewCommand) {

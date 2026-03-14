@@ -21,6 +21,8 @@
 //! automatically — the same change before and after rebase produces the same
 //! patch-id.
 
+pub mod git2;
+
 /// The ref under which all approval metadata is stored (fanout by patch-id or
 /// object OID).
 pub const APPROVALS_REF: &str = "refs/metadata/approvals";
@@ -71,7 +73,7 @@ pub struct NewApproval {
 /// Operations on approvals stored under [`APPROVALS_REF`].
 pub trait Approvals {
     /// Return all approvals recorded for `object_id` (patch-id or OID hex).
-    fn approvals_for(&self, object_id: &str) -> Result<Vec<Approval>, git2::Error>;
+    fn approvals_for(&self, object_id: &str) -> Result<Vec<Approval>, ::git2::Error>;
 
     /// Return the approval by `approver_fingerprint` for `object_id`, or
     /// `None` if the approver has not yet approved.
@@ -79,10 +81,10 @@ pub trait Approvals {
         &self,
         object_id: &str,
         approver_fingerprint: &str,
-    ) -> Result<Option<Approval>, git2::Error>;
+    ) -> Result<Option<Approval>, ::git2::Error>;
 
     /// Record a new approval.
-    fn add_approval(&self, approval: &NewApproval) -> Result<(), git2::Error>;
+    fn add_approval(&self, approval: &NewApproval) -> Result<(), ::git2::Error>;
 
     /// Bulk-approve every patch-id in `patch_ids` plus a single range approval
     /// for `range_patch_id`. This is what `git forge review approve` calls
@@ -92,7 +94,7 @@ pub trait Approvals {
         patch_ids: &[String],
         range_patch_id: &str,
         message: Option<&str>,
-    ) -> Result<(), git2::Error>;
+    ) -> Result<(), ::git2::Error>;
 
     /// Return `true` if `object_id` has at least `min_approvals` distinct
     /// approvals, excluding `exclude` when `Some`.
@@ -101,5 +103,5 @@ pub trait Approvals {
         object_id: &str,
         min_approvals: usize,
         exclude: Option<&str>,
-    ) -> Result<bool, git2::Error>;
+    ) -> Result<bool, ::git2::Error>;
 }

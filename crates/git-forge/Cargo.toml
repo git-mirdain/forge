@@ -13,7 +13,10 @@ path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 clap_mangen = { workspace = true }
-git2 = { workspace = true }
+git-forge-core = { workspace = true }
+git-forge-issues = { workspace = true }
+git-forge-review = { workspace = true }
+git-forge-release = { workspace = true }
 
 [lints]
 workspace = true

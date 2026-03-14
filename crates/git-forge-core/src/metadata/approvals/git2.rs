@@ -2,7 +2,7 @@
 
 use git2::Repository;
 
-use crate::annotations::approvals::{Approval, Approvals, NewApproval};
+use crate::metadata::approvals::{Approval, Approvals, NewApproval};
 
 impl Approvals for Repository {
     fn approvals_for(&self, _object_id: &str) -> Result<Vec<Approval>, git2::Error> {
