@@ -15,7 +15,7 @@
 ## About
 
 To support a more expansive usage of the Git object database — as is the goal for other projects within the [`git-ents`](https://github.com/git-ents) organization — new tooling is needed.
-This project aims to add support for local-first Git forge infrastructure.
+This project aims to add support for local-first Git forge infrastructure: issues, reviews, and releases, all stored inside the repository itself.
 
 You may see the terms *porcelain* and *plumbing* used across this project.
 These are [borrowed from Git itself](https://git-scm.com/book/en/v2/Git-Internals-Plumbing-and-Porcelain): porcelain refers to user-facing commands, and plumbing refers to the lower-level libraries and commands they are built on.
@@ -23,5 +23,9 @@ These are [borrowed from Git itself](https://git-scm.com/book/en/v2/Git-Internal
 ## Crates
 
 | Crate | Description | API |
-|---|---|----|
-| [`git-forge`](crates/git-forge/) | The library and CLI entrypoint. | Porcelain |
+|---|---|---|
+| [`git-forge`](crates/git-forge/) | CLI entrypoint and library facade. | Porcelain |
+| [`git-forge-core`](crates/git-forge-core/) | Shared annotations: code comments and approvals. | Plumbing |
+| [`git-forge-issues`](crates/git-forge-issues/) | Issue tracking. | Porcelain |
+| [`git-forge-review`](crates/git-forge-review/) | Pull/merge request reviews. | Porcelain |
+| [`git-forge-release`](crates/git-forge-release/) | Release management. | Porcelain |
