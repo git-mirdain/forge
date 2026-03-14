@@ -12,6 +12,7 @@ git2 = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "issues"

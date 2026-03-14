@@ -58,7 +58,7 @@ fn read_comments(
     _repo: &Repository,
     _tree: &git2::Tree<'_>,
 ) -> Result<Vec<(String, String)>, git2::Error> {
-    todo!()
+    Ok(Vec::new())
 }
 
 fn issue_from_ref(

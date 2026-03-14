@@ -31,3 +31,4 @@ git-forge-core = { path = "crates/git-forge-core" }
 git-forge-issues = { path = "crates/git-forge-issues" }
 git-forge-review = { path = "crates/git-forge-review" }
 git-forge-release = { path = "crates/git-forge-release" }
+tempfile = "3"
