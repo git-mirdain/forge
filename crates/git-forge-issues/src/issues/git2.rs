@@ -166,12 +166,16 @@ impl Issues for Repository {
         Ok(issues)
     }
 
-    fn find_issue(
-        &self,
-        _id: u64,
-        _opts: Option<&IssueOpts>,
-    ) -> Result<Option<Issue>, git2::Error> {
-        todo!()
+    fn find_issue(&self, id: u64, opts: Option<&IssueOpts>) -> Result<Option<Issue>, git2::Error> {
+        let prefix = opts
+            .map(|o| o.ref_prefix.as_str())
+            .unwrap_or(ISSUES_REF_PREFIX);
+        let ref_name = format!("{prefix}{id}");
+        match self.find_reference(&ref_name) {
+            Ok(reference) => issue_from_ref(self, &reference, prefix),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     fn create_issue(
