@@ -3,8 +3,11 @@
 //! An issue is a standalone ref with its own lifecycle:
 //!
 //! ```text
-//! refs/meta/issues/<issue-id> → commit → tree
-//! ├── meta            # toml: author, title, state, labels, assignees, created
+//! refs/issues/<issue-id> → commit → tree
+//! ├── author          # plain text: fingerprint
+//! ├── title           # plain text: single-line title
+//! ├── state           # plain text: "open" or "closed"
+//! ├── labels/         # dir: empty blobs whose names are the labels
 //! ├── body            # markdown
 //! └── comments/
 //!     ├── 001-<ts>-<fingerprint>      # markdown

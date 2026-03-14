@@ -2,11 +2,133 @@
 
 use git2::Repository;
 
-use crate::issues::{Issue, IssueOpts, IssueState, Issues};
+use crate::issues::{ISSUES_REF_PREFIX, Issue, IssueMeta, IssueOpts, IssueState, Issues};
+
+// ---------------------------------------------------------------------------
+// Reading helpers
+// ---------------------------------------------------------------------------
+
+fn blob_content<'repo>(
+    repo: &'repo Repository,
+    tree: &git2::Tree<'repo>,
+    name: &str,
+) -> Result<Option<String>, git2::Error> {
+    match tree.get_name(name) {
+        None => Ok(None),
+        Some(entry) => {
+            let obj = entry.to_object(repo)?;
+            let blob = obj
+                .as_blob()
+                .ok_or_else(|| git2::Error::from_str(&format!("{name} is not a blob")))?;
+            Ok(Some(
+                std::str::from_utf8(blob.content())
+                    .unwrap_or("")
+                    .trim_end()
+                    .to_string(),
+            ))
+        }
+    }
+}
+
+fn read_state(repo: &Repository, tree: &git2::Tree<'_>) -> Result<IssueState, git2::Error> {
+    match blob_content(repo, tree, "state")?.as_deref() {
+        Some("closed") => Ok(IssueState::Closed),
+        _ => Ok(IssueState::Open),
+    }
+}
+
+fn read_labels(repo: &Repository, tree: &git2::Tree<'_>) -> Result<Vec<String>, git2::Error> {
+    let entry = match tree.get_name("labels") {
+        None => return Ok(Vec::new()),
+        Some(e) => e,
+    };
+    let obj = entry.to_object(repo)?;
+    let subtree = obj
+        .as_tree()
+        .ok_or_else(|| git2::Error::from_str("labels is not a tree"))?;
+    let mut labels: Vec<String> = subtree
+        .iter()
+        .filter_map(|e| e.name().map(str::to_string))
+        .collect();
+    labels.sort();
+    Ok(labels)
+}
+
+fn read_comments(
+    _repo: &Repository,
+    _tree: &git2::Tree<'_>,
+) -> Result<Vec<(String, String)>, git2::Error> {
+    todo!()
+}
+
+fn issue_from_ref(
+    repo: &Repository,
+    reference: &git2::Reference<'_>,
+    ref_prefix: &str,
+) -> Result<Option<Issue>, git2::Error> {
+    let ref_name = match reference.name() {
+        None => return Ok(None),
+        Some(n) => n,
+    };
+
+    let id_str = match ref_name.strip_prefix(ref_prefix) {
+        None => return Ok(None),
+        Some(s) => s,
+    };
+
+    // Skip nested refs (e.g. sub-directories).
+    if id_str.contains('/') {
+        return Ok(None);
+    }
+
+    let id: u64 = match id_str.parse() {
+        Ok(n) => n,
+        Err(_) => return Ok(None),
+    };
+
+    let commit = reference.peel_to_commit()?;
+    let tree = commit.tree()?;
+
+    let author = blob_content(repo, &tree, "author")?.unwrap_or_default();
+    let title = blob_content(repo, &tree, "title")?.unwrap_or_default();
+    let state = read_state(repo, &tree)?;
+    let labels = read_labels(repo, &tree)?;
+
+    let body = blob_content(repo, &tree, "body")?.unwrap_or_default();
+    let comments = read_comments(repo, &tree)?;
+
+    Ok(Some(Issue {
+        id,
+        meta: IssueMeta {
+            author,
+            title,
+            state,
+            labels,
+        },
+        body,
+        comments,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// Trait impl
+// ---------------------------------------------------------------------------
 
 impl Issues for Repository {
-    fn list_issues(&self, _opts: Option<&IssueOpts>) -> Result<Vec<Issue>, git2::Error> {
-        todo!()
+    fn list_issues(&self, opts: Option<&IssueOpts>) -> Result<Vec<Issue>, git2::Error> {
+        let prefix = opts
+            .map(|o| o.ref_prefix.as_str())
+            .unwrap_or(ISSUES_REF_PREFIX);
+
+        let mut issues = Vec::new();
+        for reference in self.references_glob(&format!("{prefix}*"))? {
+            let reference = reference?;
+            if let Some(issue) = issue_from_ref(self, &reference, prefix)? {
+                issues.push(issue);
+            }
+        }
+        issues.sort_by_key(|i| i.id);
+        Ok(issues)
     }
 
     fn list_issues_by_state(
