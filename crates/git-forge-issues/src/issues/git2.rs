@@ -133,10 +133,37 @@ impl Issues for Repository {
 
     fn list_issues_by_state(
         &self,
-        _state: IssueState,
-        _opts: Option<&IssueOpts>,
+        state: IssueState,
+        opts: Option<&IssueOpts>,
     ) -> Result<Vec<Issue>, git2::Error> {
-        todo!()
+        let prefix = opts
+            .map(|o| o.ref_prefix.as_str())
+            .unwrap_or(ISSUES_REF_PREFIX);
+
+        let mut issues = Vec::new();
+        for reference in self.references_glob(&format!("{prefix}*"))? {
+            let reference = reference?;
+            let ref_name = reference
+                .name()
+                .ok_or_else(|| git2::Error::from_str("ref name is not valid UTF-8"))?;
+            let id_str = &ref_name[prefix.len()..];
+            if id_str.parse::<u64>().is_err() {
+                return Err(git2::Error::from_str(&format!(
+                    "ref {ref_name} has non-numeric id; delete it to continue"
+                )));
+            }
+            let commit = reference.peel_to_commit()?;
+            let tree = commit.tree()?;
+            // TODO perhaps we just continue if no state found, instead of Err?
+            if read_state(self, &tree)? != state {
+                continue;
+            }
+            if let Some(issue) = issue_from_ref(self, &reference, prefix)? {
+                issues.push(issue);
+            }
+        }
+        issues.sort_by_key(|i| i.id);
+        Ok(issues)
     }
 
     fn find_issue(
