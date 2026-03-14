@@ -8,8 +8,7 @@
 <!-- rumdl-enable MD013 -->
 
 > [!CAUTION]
-> This project is in active development.
-> There are surely bugs and misbehaviors that have not yet been discovered.
+> This project is in active development and has not yet been published to crates.io.
 > Please file a [new issue] for any misbehaviors you find!
 
 [new issue]: https://github.com/git-ents/git-forge/issues/new
@@ -26,7 +25,7 @@ It wires together the domain crates — issues, reviews, and releases — into a
 The `git-forge` command can be installed with `cargo install`.
 
 ```shell
-cargo install --locked git-forge
+cargo install --locked --git https://github.com/git-ents/git-forge.git git-forge
 ```
 
 If `~/.cargo/bin` is on your `PATH`, you can invoke the command with `git`.
@@ -40,5 +39,5 @@ git forge -h
 The `git-forge` library can be added to your Rust project via `cargo add`.
 
 ```shell
-cargo add git-forge
+cargo add --git https://github.com/git-ents/git-forge.git git-forge
 ```

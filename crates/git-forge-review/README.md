@@ -3,8 +3,7 @@
 *Pull/merge request reviews for local-first Git forge infrastructure.*
 
 > [!CAUTION]
-> This project is in active development.
-> There are surely bugs and misbehaviors that have not yet been discovered.
+> This project is in active development and has not yet been published to <crates.io>.
 > Please file a [new issue] for any misbehaviors you find!
 
 [new issue]: https://github.com/git-ents/git-forge/issues/new
@@ -24,5 +23,5 @@ The review is how you discover which commits to look at; the annotations are wha
 The `git-forge-review` library can be added to your Rust project via `cargo add`.
 
 ```shell
-cargo add git-forge-review
+cargo add --git https://github.com/git-ents/git-forge.git git-forge-review
 ```

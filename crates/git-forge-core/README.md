@@ -3,8 +3,7 @@
 *Shared annotations for git-forge: code comments and approvals.*
 
 > [!CAUTION]
-> This project is in active development.
-> There are surely bugs and misbehaviors that have not yet been discovered.
+> This project is in active development and has not yet been published to crates.io.
 > Please file a [new issue] for any misbehaviors you find!
 
 [new issue]: https://github.com/git-ents/git-forge/issues/new
@@ -25,5 +24,4 @@ They are stored under `refs/metadata/approvals/` and keyed on patch-ids rather t
 The `git-forge-core` library can be added to your Rust project via `cargo add`.
 
 ```shell
-cargo add git-forge-core
-```
+cargo add --git https://github.com/git-ents/git-forge.git git-forge-core
