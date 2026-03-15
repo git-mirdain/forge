@@ -25,9 +25,6 @@ pub fn review_comments_ref(id: u64) -> String {
 }
 
 /// The location within a Git object that a comment targets.
-///
-/// The variant encodes the object kind, making invalid combinations
-/// (e.g. a line range on a commit) unrepresentable.
 #[derive(Clone, Debug)]
 pub enum Anchor {
     /// A blob (file), with an optional line range.
@@ -38,15 +35,9 @@ pub enum Anchor {
         line_range: Option<(u32, u32)>,
     },
     /// A single commit.
-    Commit {
-        /// SHA of the commit object.
-        oid: ::git2::Oid,
-    },
+    Commit(::git2::Oid),
     /// A tree (directory).
-    Tree {
-        /// SHA of the tree object.
-        oid: ::git2::Oid,
-    },
+    Tree(::git2::Oid),
     /// A range between two commits (inclusive).
     CommitRange {
         /// SHA of the first commit in the range.
@@ -71,50 +62,18 @@ pub struct Comment {
     pub resolved: bool,
     /// OID of the parent comment (second parent), if this is a reply.
     pub parent_oid: Option<::git2::Oid>,
-    /// OID of a suggestion blob in the commit tree, if present.
-    pub suggestion_oid: Option<::git2::Oid>,
-}
-
-/// Parameters for appending a new commit to a comment chain.
-///
-/// Author and timestamp come from the git environment (`GIT_AUTHOR_*` or config).
-#[derive(Clone, Debug)]
-pub enum NewComment {
-    /// A top-level comment anchored to a Git object.
-    TopLevel {
-        /// What this comment is anchored to.
-        anchor: Anchor,
-        /// Markdown body.
-        body: String,
-        /// Optional suggestion blob OID.
-        suggestion_oid: Option<::git2::Oid>,
-    },
-    /// A reply to an existing comment (adds a second parent).
-    Reply {
-        /// Markdown body.
-        body: String,
-        /// OID of the comment being replied to (becomes the second parent).
-        parent_oid: ::git2::Oid,
-        /// Optional suggestion blob OID.
-        suggestion_oid: Option<::git2::Oid>,
-    },
-    /// Resolves a comment thread (adds `Resolved: true` trailer).
-    Resolve {
-        /// OID of the comment being resolved (becomes the second parent).
-        comment_oid: ::git2::Oid,
-    },
 }
 
 /// Operations on comment refs under [`COMMENTS_REF_PREFIX`].
 pub trait Comments {
-    /// Return all comments on the given ref, ordered by timestamp ascending.
+    /// Return all comments on the given ref in reverse-chronological order.
     ///
     /// # Errors
     ///
     /// Returns `git2::Error` if the underlying repository operation fails.
     fn comments_on(&self, ref_name: &str) -> Result<Vec<Comment>, ::git2::Error>;
 
-    /// Find a single comment by OID on the given ref, returning `None` if not found.
+    /// Find a single comment by OID, returning `None` if not found.
     ///
     /// # Errors
     ///
@@ -125,7 +84,7 @@ pub trait Comments {
         oid: ::git2::Oid,
     ) -> Result<Option<Comment>, ::git2::Error>;
 
-    /// Append a comment to the chain, returning the OID of the created commit.
+    /// Append a top-level comment to the chain, returning the new commit OID.
     ///
     /// # Errors
     ///
@@ -133,6 +92,30 @@ pub trait Comments {
     fn add_comment(
         &self,
         ref_name: &str,
-        comment: &NewComment,
+        anchor: &Anchor,
+        body: &str,
+    ) -> Result<::git2::Oid, ::git2::Error>;
+
+    /// Append a reply to an existing comment, returning the new commit OID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `git2::Error` if the underlying repository operation fails.
+    fn reply_to_comment(
+        &self,
+        ref_name: &str,
+        parent_oid: ::git2::Oid,
+        body: &str,
+    ) -> Result<::git2::Oid, ::git2::Error>;
+
+    /// Append a resolution to an existing comment thread, returning the new commit OID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `git2::Error` if the underlying repository operation fails.
+    fn resolve_comment(
+        &self,
+        ref_name: &str,
+        comment_oid: ::git2::Oid,
     ) -> Result<::git2::Oid, ::git2::Error>;
 }
