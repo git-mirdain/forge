@@ -5,7 +5,7 @@ members = [
     "crates/git-forge-core",
     "crates/git-forge-issues",
     "crates/git-forge-review",
-    "crates/git-forge-release",
+    "crates/git-forge-release", "crates/git-forge-comments",
 ]
 
 [workspace.package]

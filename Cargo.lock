@@ -376,6 +376,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-forge-comments"
+version = "0.0.0"
+
+[[package]]
 name = "git-forge-core"
 version = "0.0.0"
 dependencies = [
