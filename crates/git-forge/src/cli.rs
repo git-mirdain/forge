@@ -1,7 +1,7 @@
 //! The CLI definitions for the top-level `git forge` command.
 
 use clap::{Parser, Subcommand};
-use git_forge_issues::cli::IssueCommand;
+use git_forge_issue::cli::IssueCommand;
 use git_forge_release::cli::ReleaseCommand;
 use git_forge_review::cli::ReviewCommand;
 

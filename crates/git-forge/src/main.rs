@@ -17,7 +17,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Issue { command } => git_forge_issues::exe::run(command),
+        Commands::Issue { command } => git_forge_issue::exe::run(command),
         Commands::Review { command } => git_forge_review::exe::run(command),
         Commands::Release { command } => git_forge_release::exe::run(command),
     }

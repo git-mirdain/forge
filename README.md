@@ -26,6 +26,6 @@ These are [borrowed from Git itself](https://git-scm.com/book/en/v2/Git-Internal
 |---|---|---|
 | [`git-forge`](crates/git-forge/) | CLI entrypoint and library facade. | Porcelain |
 | [`git-forge-core`](crates/git-forge-core/) | Shared annotations: code comments and approvals. | Plumbing |
-| [`git-forge-issues`](crates/git-forge-issues/) | Issue tracking. | Porcelain |
+| [`git-forge-issue`](crates/git-forge-issue/) | Issue tracking. | Porcelain |
 | [`git-forge-review`](crates/git-forge-review/) | Pull/merge request reviews. | Porcelain |
 | [`git-forge-release`](crates/git-forge-release/) | Release management. | Porcelain |

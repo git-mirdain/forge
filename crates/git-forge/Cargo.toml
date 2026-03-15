@@ -14,7 +14,7 @@ path = "src/main.rs"
 clap = { workspace = true }
 clap_mangen = { workspace = true }
 git-forge-core = { workspace = true }
-git-forge-issues = { workspace = true }
+git-forge-issue = { workspace = true }
 git-forge-review = { workspace = true }
 git-forge-release = { workspace = true }
 

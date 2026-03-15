@@ -20,6 +20,11 @@
 //! Issue comments are conversation within the issue. They are not the same as
 //! code comments — those live in `git_forge_core::metadata::comments`.
 
+#[cfg(test)]
+mod tests;
+
+pub mod cli;
+pub mod exe;
 pub mod git2;
 
 /// Ref prefix under which issue refs are stored.
@@ -118,7 +123,7 @@ pub trait Issues {
     ///
     /// Returns `git2::Error` if the underlying repository operation fails.
     fn find_issue(&self, id: u64, opts: Option<&IssueOpts>)
-    -> Result<Option<Issue>, ::git2::Error>;
+        -> Result<Option<Issue>, ::git2::Error>;
 
     /// Create a new issue, returning the assigned ID.
     ///

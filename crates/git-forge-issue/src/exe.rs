@@ -5,7 +5,7 @@ use std::process;
 use git2::Repository;
 
 use crate::cli::{IssueCommand, StateArg};
-use crate::issues::{IssueState, Issues};
+use crate::{IssueState, Issues};
 
 /// Resolve the editor to use, matching Git's own precedence:
 /// `GIT_EDITOR` → `core.editor` (git config) → `VISUAL` → `EDITOR` → `"vi"`.

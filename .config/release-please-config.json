@@ -12,8 +12,8 @@
   "packages": {
     "crates/git-forge": {},
     "crates/git-forge-core": {},
-    "crates/git-forge-comments": {},
-    "crates/git-forge-issues": {},
+    "crates/git-forge-comment": {},
+    "crates/git-forge-issue": {},
     "crates/git-forge-review": {},
     "crates/git-forge-release": {}
   },

@@ -1,8 +1,8 @@
 {
   "crates/git-forge": "0.0.0",
   "crates/git-forge-core": "0.0.0",
-  "crates/git-forge-comments": "0.0.0",
-  "crates/git-forge-issues": "0.0.0",
+  "crates/git-forge-comment": "0.0.0",
+  "crates/git-forge-issue": "0.0.0",
   "crates/git-forge-review": "0.0.0",
   "crates/git-forge-release": "0.0.0"
 }

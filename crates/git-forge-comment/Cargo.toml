@@ -1,5 +1,5 @@
 [package]
-name = "git-forge-comments"
+name = "git-forge-comment"
 version = "0.0.0"
 edition.workspace = true
 publish.workspace = true

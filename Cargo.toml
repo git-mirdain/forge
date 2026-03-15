@@ -3,9 +3,10 @@ resolver = "3"
 members = [
     "crates/git-forge",
     "crates/git-forge-core",
-    "crates/git-forge-issues",
+    "crates/git-forge-issue",
     "crates/git-forge-review",
-    "crates/git-forge-release", "crates/git-forge-comments",
+    "crates/git-forge-release",
+    "crates/git-forge-comment",
 ]
 
 [workspace.package]
@@ -28,7 +29,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 git2 = "0.20.4"
 globset = "0.4.18"
 git-forge-core = { path = "crates/git-forge-core" }
-git-forge-issues = { path = "crates/git-forge-issues" }
+git-forge-issue = { path = "crates/git-forge-issue" }
 git-forge-review = { path = "crates/git-forge-review" }
 git-forge-release = { path = "crates/git-forge-release" }
 tempfile = "3"

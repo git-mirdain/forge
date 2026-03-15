@@ -2,7 +2,7 @@
 
 use git2::Repository;
 
-use crate::issues::{ISSUES_REF_PREFIX, Issue, IssueMeta, IssueOpts, IssueState, Issues};
+use crate::{ISSUES_REF_PREFIX, Issue, IssueMeta, IssueOpts, IssueState, Issues};
 
 // ---------------------------------------------------------------------------
 // Reading helpers

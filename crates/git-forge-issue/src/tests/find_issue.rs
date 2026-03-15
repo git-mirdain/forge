@@ -1,7 +1,7 @@
 use git2::Repository;
 use tempfile::TempDir;
 
-use crate::issues::{IssueOpts, Issues};
+use crate::issue::{IssueOpts, Issues};
 
 fn repo() -> (TempDir, Repository) {
     let dir = TempDir::new().unwrap();
