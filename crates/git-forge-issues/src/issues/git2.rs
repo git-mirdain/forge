@@ -247,15 +247,83 @@ impl Issues for Repository {
 
     fn update_issue(
         &self,
-        _id: u64,
-        _title: Option<&str>,
-        _body: Option<&str>,
-        _labels: Option<&[String]>,
+        id: u64,
+        title: Option<&str>,
+        body: Option<&str>,
+        labels: Option<&[String]>,
         _assignees: Option<&[String]>,
-        _state: Option<IssueState>,
-        _opts: Option<&IssueOpts>,
+        state: Option<IssueState>,
+        opts: Option<&IssueOpts>,
     ) -> Result<(), git2::Error> {
-        todo!()
+        let prefix = opts
+            .map(|o| o.ref_prefix.as_str())
+            .unwrap_or(ISSUES_REF_PREFIX);
+
+        // Find the existing issue
+        let existing = self.find_issue(id, opts)?;
+        let mut issue =
+            existing.ok_or_else(|| git2::Error::from_str(&format!("issue {id} not found")))?;
+
+        // Apply updates
+        if let Some(new_title) = title {
+            issue.meta.title = new_title.to_string();
+        }
+        if let Some(new_body) = body {
+            issue.body = new_body.to_string();
+        }
+        if let Some(new_labels) = labels {
+            issue.meta.labels = new_labels.to_vec();
+        }
+        if let Some(new_state) = state {
+            issue.meta.state = new_state;
+        }
+
+        // Build the new tree
+        let sig = self.signature()?;
+        let empty_blob = self.blob(b"")?;
+
+        // labels/ subtree
+        let labels_tree = {
+            let mut tb = self.treebuilder(None)?;
+            for label in &issue.meta.labels {
+                tb.insert(label, empty_blob, 0o100644)?;
+            }
+            tb.write()?
+        };
+
+        let author_blob = self.blob(issue.meta.author.as_bytes())?;
+        let title_blob = self.blob(issue.meta.title.as_bytes())?;
+        let state_blob = self.blob(issue.meta.state.as_str().as_bytes())?;
+        let body_blob = self.blob(issue.body.as_bytes())?;
+
+        let tree_oid = {
+            let mut tb = self.treebuilder(None)?;
+            tb.insert("author", author_blob, 0o100644)?;
+            tb.insert("title", title_blob, 0o100644)?;
+            tb.insert("state", state_blob, 0o100644)?;
+            tb.insert("body", body_blob, 0o100644)?;
+            tb.insert("labels", labels_tree, 0o040000)?;
+            tb.write()?
+        };
+
+        let tree = self.find_tree(tree_oid)?;
+        let ref_name = format!("{prefix}{id}");
+
+        // Get the current commit for the parent
+        let mut reference = self.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+
+        let message = format!("update issue {id}");
+        self.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            &message,
+            &tree,
+            &[&parent_commit],
+        )?;
+
+        Ok(())
     }
 
     fn add_issue_comment(
