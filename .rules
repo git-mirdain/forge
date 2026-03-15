@@ -39,6 +39,7 @@
 - Never push.
 - Always commit after completing a task.
 - Use `git commit --fixup <sha>` for changes that amend a commit not yet pushed to remote.
+- Expect `prek` (not `pre-commit`) to have installed git hooks; if no hooks run on commit, try running the install command: `prek install -c .config/pre-commit.yaml`.
 - Keep commit messages terse; no long prose.
 - When committing, use Conventional Commit style; prefer brief prose in the body over bullet lists.
 - Every trackable change (anything that belongs in a changelog) must appear as either the commit header or a Conventional Commit footer token, e.g. `feat: add Foo`, `deprecates: Bar`; this applies even when the information duplicates the body.
@@ -46,5 +47,17 @@
 - The final footer must always be `Assisted-by: $Tool ($Model $Version)` — for example: `Assisted-by: Zed (Claude Sonnet 4.6)`, `Assisted-by: Claude Code (Claude Haiku 4.6)`.
 - Prioritize multiple commits when warranted.
 - The only commit scopes that should be used are those listed in `.config/committed.toml`; this project does not use scopes for code contributions that are user-facing.
-- Expect `prek` (not `pre-commit`) to have installed git hooks; if no hooks run on commit, try running the install command: `prek install -c .config/pre-commit.yaml`.
-- You may make commits; use `fixup!` and `wip:` as appropriate, but do not `fixup!` commits that are already pushed to a remote.
+
+Use the following commit message example as a reference.
+
+```text
+feat: add interactive mode to `create_issue` and make all fields optional
+
+The new `--interactive` flag mimics commit message mechanics; on
+`git forge issue new`, a file opens for a user to edit.
+
+refactor: accept optional title and body in `create_issue()`
+feat: add `create_issue_interactive()` with TOML frontmatter editor
+feat: add `--interactive` flag to New command
+Assisted-by: Claude Code (Claude Haiku 4.5)
+```
