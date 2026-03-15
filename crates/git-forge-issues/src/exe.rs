@@ -17,6 +17,43 @@ fn open_repo() -> Repository {
     }
 }
 
+/// A wrapper type which manipulates issues for the provided repository.
+struct Executor(git2::Repository);
+
+impl Executor {
+    /// Constructs an `Executor` from a path to a repository.
+    pub fn from_path(path: &str) -> Result<Self, git2::Error> {
+        let repo = Repository::open(path)?;
+        Ok(Self(repo))
+    }
+
+    /// Constructs an `Executor` from [`Repository::open_from_env()`].
+    pub fn from_env() -> Result<Self, git2::Error> {
+        let repo = Repository::open_from_env()?;
+        Ok(Self(repo))
+    }
+
+    /// Return a reference the underlying [`git2::Repository`].
+    pub fn repo(&self) -> &git2::Repository {
+        &self.0
+    }
+
+    /// Lists issues for the repository, optionally filtered by state.
+    pub fn list_issues(&self, state: Option<IssueState>) -> Result<(), Box<dyn std::error::Error>> {
+        let repo = self.repo();
+
+        let issues = match state {
+            Some(state) => repo.list_issues_by_state(state, None)?,
+            None => repo.list_issues(None)?,
+        };
+
+        for issue in issues {
+            println!("#{}\t{}", issue.id, issue.meta.title);
+        }
+        Ok(())
+    }
+}
+
 fn run_inner(command: IssueCommand) -> Result<(), Box<dyn std::error::Error>> {
     let repo = open_repo();
 
