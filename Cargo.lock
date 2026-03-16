@@ -403,6 +403,7 @@ dependencies = [
  "git-forge-issue",
  "git-forge-release",
  "git-forge-review",
+ "git2",
  "predicates",
  "tempfile",
 ]

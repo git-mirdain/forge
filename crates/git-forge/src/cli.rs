@@ -43,4 +43,14 @@ pub enum Commands {
         #[command(subcommand)]
         command: CommentCommand,
     },
+
+    /// Install forge refspecs into git config for a remote.
+    Install {
+        /// Remote to configure. Defaults to `origin` if it exists.
+        remote: Option<String>,
+
+        /// Add the refspec to the global git config (~/.gitconfig) instead of the local repo config.
+        #[arg(long)]
+        global: bool,
+    },
 }

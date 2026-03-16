@@ -5,6 +5,8 @@ use git_forge::cli::{Cli, Commands};
 use std::path::PathBuf;
 use std::process;
 
+mod install;
+
 fn main() {
     if let Some(dir) = parse_generate_man_flag() {
         if let Err(e) = generate_man_page(&dir) {
@@ -21,6 +23,12 @@ fn main() {
         Commands::Review { command } => git_forge_review::exe::run(command),
         Commands::Release { command } => git_forge_release::exe::run(command),
         Commands::Comment { command } => git_forge_comment::exe::run(command),
+        Commands::Install { remote, global } => {
+            if let Err(e) = install::run(remote.as_deref(), global) {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        }
     }
 }
 
