@@ -30,12 +30,12 @@ pub fn review_comments_ref(id: u64) -> String {
 /// The location within a Git object that a comment targets.
 #[derive(Clone, Debug)]
 pub enum Anchor {
-    /// A blob (file), with an optional line range.
+    /// A blob (file), with zero or more line ranges (union).
     Blob {
         /// SHA of the blob object.
         oid: ::git2::Oid,
-        /// Line range `(start, end)` within the blob, if applicable.
-        line_range: Option<(u32, u32)>,
+        /// Line ranges within the blob; empty means the whole file.
+        line_ranges: Vec<(u32, u32)>,
     },
     /// A single commit.
     Commit(::git2::Oid),

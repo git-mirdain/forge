@@ -8,16 +8,31 @@ const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 struct Trailers {
     anchor_oid: Option<git2::Oid>,
-    anchor_range: Option<(u32, u32)>,
+    anchor_ranges: Vec<(u32, u32)>,
     anchor_end: Option<git2::Oid>,
     resolved: bool,
     replaces_oid: Option<git2::Oid>,
 }
 
+/// Parse a comma-separated list of `start-end` pairs (e.g. `"1-5,10-15"`).
+pub(crate) fn parse_ranges(s: &str) -> Vec<(u32, u32)> {
+    s.split(',')
+        .filter_map(|part| {
+            let (start, end) = part.trim().split_once('-')?;
+            Some((start.parse::<u32>().ok()?, end.parse::<u32>().ok()?))
+        })
+        .collect()
+}
+
+/// Serialize a slice of ranges to `"start-end,start-end"` form.
+fn format_ranges(ranges: &[(u32, u32)]) -> String {
+    ranges.iter().map(|(s, e)| format!("{s}-{e}")).collect::<Vec<_>>().join(",")
+}
+
 fn parse_trailers(msg: &str) -> Trailers {
     let mut t = Trailers {
         anchor_oid: None,
-        anchor_range: None,
+        anchor_ranges: Vec::new(),
         anchor_end: None,
         resolved: false,
         replaces_oid: None,
@@ -26,11 +41,7 @@ fn parse_trailers(msg: &str) -> Trailers {
         if let Some(v) = line.strip_prefix("Anchor: ") {
             t.anchor_oid = git2::Oid::from_str(v.trim()).ok();
         } else if let Some(v) = line.strip_prefix("Anchor-Range: ") {
-            if let Some((s, e)) = v.trim().split_once('-') {
-                if let (Ok(start), Ok(end)) = (s.parse::<u32>(), e.parse::<u32>()) {
-                    t.anchor_range = Some((start, end));
-                }
-            }
+            t.anchor_ranges = parse_ranges(v.trim());
         } else if let Some(v) = line.strip_prefix("Anchor-End: ") {
             t.anchor_end = git2::Oid::from_str(v.trim()).ok();
         } else if let Some(v) = line.strip_prefix("Resolved: ") {
@@ -69,7 +80,9 @@ fn anchor_from_trailers(repo: &Repository, t: &Trailers) -> Result<Anchor, git2:
     }
 
     match repo.find_object(oid, None)?.kind() {
-        Some(git2::ObjectType::Blob) => Ok(Anchor::Blob { oid, line_range: t.anchor_range }),
+        Some(git2::ObjectType::Blob) => {
+            Ok(Anchor::Blob { oid, line_ranges: t.anchor_ranges.clone() })
+        }
         Some(git2::ObjectType::Tree) => Ok(Anchor::Tree(oid)),
         _ => Ok(Anchor::Commit(oid)),
     }
@@ -103,10 +116,10 @@ fn build_message(
     msg.push_str("\n\n");
 
     match anchor {
-        Anchor::Blob { oid, line_range } => {
+        Anchor::Blob { oid, line_ranges } => {
             msg.push_str(&format!("Anchor: {oid}\n"));
-            if let Some((start, end)) = line_range {
-                msg.push_str(&format!("Anchor-Range: {start}-{end}\n"));
+            if !line_ranges.is_empty() {
+                msg.push_str(&format!("Anchor-Range: {}\n", format_ranges(line_ranges)));
             }
         }
         Anchor::Commit(oid) => msg.push_str(&format!("Anchor: {oid}\n")),
@@ -155,6 +168,16 @@ fn append_commit(
     }
 
     repo.commit(Some(ref_name), &sig, &sig, message, &empty_tree, &parents)
+}
+
+/// Resolve a path to a blob OID by looking it up in HEAD's tree.
+pub fn blob_oid_for_path(repo: &Repository, path_str: &str) -> Result<git2::Oid, git2::Error> {
+    let tree = repo.head()?.peel_to_tree()?;
+    let entry = tree.get_path(std::path::Path::new(path_str))?;
+    if entry.kind() != Some(git2::ObjectType::Blob) {
+        return Err(git2::Error::from_str("path does not resolve to a blob"));
+    }
+    Ok(entry.id())
 }
 
 impl Comments for Repository {

@@ -6,6 +6,7 @@ use std::process;
 use git2::Repository;
 
 use crate::cli::CommentCommand;
+use crate::git2::{blob_oid_for_path, parse_ranges};
 use crate::{Anchor, Comments, COMMENTS_REF_PREFIX};
 
 /// Resolve the editor to use, matching Git's own precedence:
@@ -167,11 +168,16 @@ impl Executor {
 
         println!("commit {}", comment.oid);
         match &comment.anchor {
-            Anchor::Blob { oid, line_range } => {
-                if let Some((s, e)) = line_range {
-                    println!("anchor: blob {oid} lines {s}-{e}");
-                } else {
+            Anchor::Blob { oid, line_ranges } => {
+                if line_ranges.is_empty() {
                     println!("anchor: blob {oid}");
+                } else {
+                    let ranges = line_ranges
+                        .iter()
+                        .map(|(s, e)| format!("{s}-{e}"))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    println!("anchor: blob {oid} lines {ranges}");
                 }
             }
             Anchor::Commit(oid) => println!("anchor: commit {oid}"),
@@ -193,41 +199,58 @@ impl Executor {
     }
 }
 
-fn build_anchor(
+/// Resolve an anchor argument to an [`Anchor`].
+///
+/// `anchor` may be an OID or a file path (resolved against HEAD's tree).
+/// When `anchor_type` is omitted the object's kind is used to infer the type.
+/// `range` is a comma-separated list of `start-end` pairs for blob anchors.
+pub fn build_anchor(
     repo: &git2::Repository,
     anchor: Option<String>,
     anchor_type: Option<String>,
     range: Option<String>,
 ) -> Result<Anchor, Box<dyn Error>> {
-    let oid_str = anchor.as_deref().unwrap_or("");
-    let kind = anchor_type.as_deref().unwrap_or("commit");
+    let anchor_str = anchor.as_deref().unwrap_or("");
 
-    if oid_str.is_empty() {
-        // Default: anchor to HEAD commit
+    if anchor_str.is_empty() {
         let head = repo.head()?.peel_to_commit()?;
         return Ok(Anchor::Commit(head.id()));
     }
 
-    let oid = git2::Oid::from_str(oid_str)
-        .map_err(|e| format!("invalid anchor OID {oid_str:?}: {e}"))?;
-
-    match kind {
-        "blob" => {
-            let line_range = range.as_deref().and_then(|r| {
-                let (s, e) = r.split_once('-')?;
-                Some((s.parse::<u32>().ok()?, e.parse::<u32>().ok()?))
-            });
-            Ok(Anchor::Blob { oid, line_range })
+    // Try to parse as OID first; fall back to path resolution.
+    let (oid, inferred_blob) = match git2::Oid::from_str(anchor_str) {
+        Ok(oid) => (oid, false),
+        Err(_) => {
+            let oid = blob_oid_for_path(repo, anchor_str)
+                .map_err(|e| format!("anchor {anchor_str:?} is not a valid OID or path: {e}"))?;
+            (oid, true)
         }
-        "commit" => Ok(Anchor::Commit(oid)),
-        "tree" => Ok(Anchor::Tree(oid)),
-        "commit-range" => {
-            let end_str = range.as_deref().ok_or("commit-range requires --range <start>-<end>")?;
+    };
+
+    let line_ranges = range.as_deref().map(parse_ranges).unwrap_or_default();
+
+    match anchor_type.as_deref() {
+        Some("blob") | None if inferred_blob => {
+            Ok(Anchor::Blob { oid, line_ranges })
+        }
+        Some("blob") => Ok(Anchor::Blob { oid, line_ranges }),
+        Some("commit") => Ok(Anchor::Commit(oid)),
+        Some("tree") => Ok(Anchor::Tree(oid)),
+        Some("commit-range") => {
+            let end_str = range.as_deref().ok_or("commit-range requires --range <end-oid>")?;
             let end = git2::Oid::from_str(end_str)
                 .map_err(|e| format!("invalid range end OID: {e}"))?;
             Ok(Anchor::CommitRange { start: oid, end })
         }
-        other => Err(format!("unknown anchor-type: {other:?}").into()),
+        // No explicit type and not a path — infer from object kind.
+        None => {
+            match repo.find_object(oid, None)?.kind() {
+                Some(git2::ObjectType::Blob) => Ok(Anchor::Blob { oid, line_ranges }),
+                Some(git2::ObjectType::Tree) => Ok(Anchor::Tree(oid)),
+                _ => Ok(Anchor::Commit(oid)),
+            }
+        }
+        Some(other) => Err(format!("unknown anchor-type: {other:?}").into()),
     }
 }
 
