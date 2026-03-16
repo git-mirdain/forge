@@ -11,34 +11,30 @@ use crate::{Anchor, Comments, COMMENTS_REF_PREFIX};
 
 /// Resolve the editor to use, matching Git's own precedence:
 /// `GIT_EDITOR` → `core.editor` (git config) → `VISUAL` → `EDITOR` → `"vi"`.
-fn resolve_editor(repo: &git2::Repository) -> Result<String, Box<dyn Error>> {
-    if let Ok(val) = std::env::var("GIT_EDITOR") {
-        if !val.is_empty() {
-            return Ok(val);
+fn resolve_editor(repo: &git2::Repository) -> String {
+    if let Ok(val) = std::env::var("GIT_EDITOR")
+        && !val.is_empty() {
+            return val;
         }
-    }
-    if let Ok(cfg) = repo.config() {
-        if let Ok(val) = cfg.get_string("core.editor") {
-            if !val.is_empty() {
-                return Ok(val);
+    if let Ok(cfg) = repo.config()
+        && let Ok(val) = cfg.get_string("core.editor")
+            && !val.is_empty() {
+                return val;
             }
-        }
-    }
     for var in &["VISUAL", "EDITOR"] {
-        if let Ok(val) = std::env::var(var) {
-            if !val.is_empty() {
-                return Ok(val);
+        if let Ok(val) = std::env::var(var)
+            && !val.is_empty() {
+                return val;
             }
-        }
     }
-    Ok("vi".to_string())
+    "vi".to_string()
 }
 
 fn open_editor_for_body(repo: &git2::Repository, initial: &str) -> Result<String, Box<dyn Error>> {
     use std::fs;
     use std::io::Write;
 
-    let editor = resolve_editor(repo)?;
+    let editor = resolve_editor(repo);
     let edit_path = repo.path().join("COMMENT_EDITMSG");
     {
         let mut f = fs::File::create(&edit_path)?;
@@ -53,12 +49,9 @@ fn open_editor_for_body(repo: &git2::Repository, initial: &str) -> Result<String
 }
 
 fn default_target(repo: &git2::Repository, target: Option<String>) -> Result<String, Box<dyn Error>> {
-    match target {
-        Some(t) => Ok(t),
-        None => {
-            let head = repo.head()?.peel_to_commit()?;
-            Ok(format!("commit/{}", head.id()))
-        }
+    if let Some(t) = target { Ok(t) } else {
+        let head = repo.head()?.peel_to_commit()?;
+        Ok(format!("commit/{}", head.id()))
     }
 }
 
@@ -100,9 +93,9 @@ impl Executor {
         &self,
         target: &str,
         body: &str,
-        anchor: Option<String>,
-        anchor_type: Option<String>,
-        range: Option<String>,
+        anchor: Option<&str>,
+        anchor_type: Option<&str>,
+        range: Option<&str>,
     ) -> Result<git2::Oid, Box<dyn Error>> {
         let ref_name = parse_target(target)?;
         let repo = self.repo();
@@ -214,13 +207,17 @@ impl Executor {
 /// `anchor` may be an OID or a file path (resolved against HEAD's tree).
 /// When `anchor_type` is omitted the object's kind is used to infer the type.
 /// `range` is a comma-separated list of `start-end` pairs for blob anchors.
+///
+/// # Errors
+///
+/// Returns an error if the anchor or range is invalid.
 pub fn build_anchor(
     repo: &git2::Repository,
-    anchor: Option<String>,
-    anchor_type: Option<String>,
-    range: Option<String>,
+    anchor: Option<&str>,
+    anchor_type: Option<&str>,
+    range: Option<&str>,
 ) -> Result<Anchor, Box<dyn Error>> {
-    let anchor_str = anchor.as_deref().unwrap_or("");
+    let anchor_str = anchor.unwrap_or("");
 
     if anchor_str.is_empty() {
         let head = repo.head()?.peel_to_commit()?;
@@ -228,18 +225,15 @@ pub fn build_anchor(
     }
 
     // Try to parse as OID first; fall back to path resolution.
-    let (oid, inferred_blob) = match git2::Oid::from_str(anchor_str) {
-        Ok(oid) => (oid, false),
-        Err(_) => {
-            let oid = blob_oid_for_path(repo, anchor_str)
-                .map_err(|e| format!("anchor {anchor_str:?} is not a valid OID or path: {e}"))?;
-            (oid, true)
-        }
+    let (oid, inferred_blob) = if let Ok(oid) = git2::Oid::from_str(anchor_str) { (oid, false) } else {
+        let oid = blob_oid_for_path(repo, anchor_str)
+            .map_err(|e| format!("anchor {anchor_str:?} is not a valid OID or path: {e}"))?;
+        (oid, true)
     };
 
-    let line_ranges = range.as_deref().map(parse_ranges).unwrap_or_default();
+    let line_ranges = range.map(parse_ranges).unwrap_or_default();
 
-    if let Some(range_str) = range.as_deref() {
+    if let Some(range_str) = range {
         let segment_count = range_str.split(',').filter(|s| !s.trim().is_empty()).count();
         if line_ranges.len() != segment_count {
             return Err(
@@ -259,7 +253,7 @@ pub fn build_anchor(
         }
     }
 
-    match anchor_type.as_deref() {
+    match anchor_type {
         Some("blob") | None if inferred_blob => {
             Ok(Anchor::Blob { oid, line_ranges })
         }
@@ -267,7 +261,7 @@ pub fn build_anchor(
         Some("commit") => Ok(Anchor::Commit(oid)),
         Some("tree") => Ok(Anchor::Tree(oid)),
         Some("commit-range") => {
-            let end_str = range.as_deref().ok_or("commit-range requires --range <end-oid>")?;
+            let end_str = range.ok_or("commit-range requires --range <end-oid>")?;
             let end = git2::Oid::from_str(end_str)
                 .map_err(|e| format!("invalid range end OID: {e}"))?;
             Ok(Anchor::CommitRange { start: oid, end })
@@ -291,7 +285,13 @@ fn run_inner(command: CommentCommand) -> Result<(), Box<dyn Error>> {
         CommentCommand::New { target, body, anchor, anchor_type, range } => {
             let target = default_target(executor.repo(), target)?;
             let body = read_body(executor.repo(), body)?;
-            let oid = executor.new_comment(&target, &body, anchor, anchor_type, range)?;
+            let oid = executor.new_comment(
+                &target,
+                &body,
+                anchor.as_deref(),
+                anchor_type.as_deref(),
+                range.as_deref(),
+            )?;
             println!("{oid}");
             let _ = std::fs::remove_file(executor.repo().path().join("COMMENT_EDITMSG"));
         }
@@ -310,14 +310,11 @@ fn run_inner(command: CommentCommand) -> Result<(), Box<dyn Error>> {
             let ref_name = parse_target(&target)?;
             let comment_oid = git2::Oid::from_str(&comment)
                 .map_err(|e| format!("invalid comment OID {comment:?}: {e}"))?;
-            let new_body = match body {
-                Some(b) => b,
-                None => {
-                    let existing = repo
-                        .find_comment(&ref_name, comment_oid)?
-                        .ok_or_else(|| format!("comment {comment} not found"))?;
-                    open_editor_for_body(repo, &existing.body)?
-                }
+            let new_body = if let Some(b) = body { b } else {
+                let existing = repo
+                    .find_comment(&ref_name, comment_oid)?
+                    .ok_or_else(|| format!("comment {comment} not found"))?;
+                open_editor_for_body(repo, &existing.body)?
             };
             let oid = executor.edit_comment(&target, &comment, &new_body)?;
             println!("{oid}");

@@ -119,7 +119,7 @@ fn build_anchor_path_infers_blob() {
     let expected_oid = blob_oid_for_path(&repo, "src.txt").unwrap();
 
     let anchor =
-        git_forge_comment::exe::build_anchor(&repo, Some("src.txt".to_string()), None, None)
+        git_forge_comment::exe::build_anchor(&repo, Some("src.txt"), None, None)
             .unwrap();
 
     match anchor {
@@ -137,9 +137,9 @@ fn build_anchor_path_with_ranges() {
 
     let anchor = git_forge_comment::exe::build_anchor(
         &repo,
-        Some("src.txt".to_string()),
+        Some("src.txt"),
         None,
-        Some("1-2,4-5".to_string()),
+        Some("1-2,4-5"),
     )
     .unwrap();
 
@@ -153,9 +153,10 @@ fn build_anchor_path_with_ranges() {
 fn build_anchor_oid_infers_commit() {
     let (_dir, repo) = repo_with_file();
     let commit_oid = repo.head().unwrap().peel_to_commit().unwrap().id();
+    let oid_str = commit_oid.to_string();
 
     let anchor =
-        git_forge_comment::exe::build_anchor(&repo, Some(commit_oid.to_string()), None, None)
+        git_forge_comment::exe::build_anchor(&repo, Some(&oid_str), None, None)
             .unwrap();
 
     assert!(matches!(anchor, Anchor::Commit(_)));
@@ -165,9 +166,10 @@ fn build_anchor_oid_infers_commit() {
 fn build_anchor_oid_infers_blob() {
     let (_dir, repo) = repo_with_file();
     let blob_oid = blob_oid_for_path(&repo, "src.txt").unwrap();
+    let oid_str = blob_oid.to_string();
 
     let anchor =
-        git_forge_comment::exe::build_anchor(&repo, Some(blob_oid.to_string()), None, None)
+        git_forge_comment::exe::build_anchor(&repo, Some(&oid_str), None, None)
             .unwrap();
 
     assert!(matches!(anchor, Anchor::Blob { .. }));
@@ -177,9 +179,10 @@ fn build_anchor_oid_infers_blob() {
 fn build_anchor_oid_infers_tree() {
     let (_dir, repo) = repo_with_file();
     let tree_oid = repo.head().unwrap().peel_to_tree().unwrap().id();
+    let oid_str = tree_oid.to_string();
 
     let anchor =
-        git_forge_comment::exe::build_anchor(&repo, Some(tree_oid.to_string()), None, None)
+        git_forge_comment::exe::build_anchor(&repo, Some(&oid_str), None, None)
             .unwrap();
 
     assert!(matches!(anchor, Anchor::Tree(_)));

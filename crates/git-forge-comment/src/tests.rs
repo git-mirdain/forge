@@ -29,7 +29,7 @@ fn repo_with_file() -> (TempDir, Repository) {
         let sig = repo.signature().unwrap();
         let blob_oid = repo.blob(b"hello\nworld\n").unwrap();
         let mut tb = repo.treebuilder(None).unwrap();
-        tb.insert("hello.txt", blob_oid, 0o100644).unwrap();
+        tb.insert("hello.txt", blob_oid, 0o100_644).unwrap();
         let tree_oid = tb.write().unwrap();
         let tree = repo.find_tree(tree_oid).unwrap();
         repo.commit(Some("HEAD"), &sig, &sig, "add hello.txt", &tree, &[])
@@ -278,7 +278,8 @@ fn build_anchor_defaults_to_head_commit() {
 fn build_anchor_infers_blob_from_oid() {
     let (_dir, repo) = repo_with_file();
     let blob_oid = blob_oid_for_path(&repo, "hello.txt").unwrap();
-    let anchor = crate::exe::build_anchor(&repo, Some(blob_oid.to_string()), None, None).unwrap();
+    let oid_str = blob_oid.to_string();
+    let anchor = crate::exe::build_anchor(&repo, Some(&oid_str), None, None).unwrap();
     assert!(matches!(anchor, Anchor::Blob { .. }));
 }
 
@@ -286,7 +287,8 @@ fn build_anchor_infers_blob_from_oid() {
 fn build_anchor_infers_tree_from_oid() {
     let (_dir, repo) = repo_with_file();
     let tree_oid = repo.head().unwrap().peel_to_tree().unwrap().id();
-    let anchor = crate::exe::build_anchor(&repo, Some(tree_oid.to_string()), None, None).unwrap();
+    let oid_str = tree_oid.to_string();
+    let anchor = crate::exe::build_anchor(&repo, Some(&oid_str), None, None).unwrap();
     assert!(matches!(anchor, Anchor::Tree(_)));
 }
 
@@ -295,7 +297,7 @@ fn build_anchor_path_resolves_to_blob() {
     let (_dir, repo) = repo_with_file();
     let blob_oid = blob_oid_for_path(&repo, "hello.txt").unwrap();
     let anchor =
-        crate::exe::build_anchor(&repo, Some("hello.txt".to_string()), None, None).unwrap();
+        crate::exe::build_anchor(&repo, Some("hello.txt"), None, None).unwrap();
     match anchor {
         Anchor::Blob { oid, line_ranges } => {
             assert_eq!(oid, blob_oid);
@@ -310,9 +312,9 @@ fn build_anchor_path_with_union_ranges() {
     let (_dir, repo) = repo_with_file();
     let anchor = crate::exe::build_anchor(
         &repo,
-        Some("hello.txt".to_string()),
+        Some("hello.txt"),
         None,
-        Some("1-3,5-7".to_string()),
+        Some("1-3,5-7"),
     )
     .unwrap();
     match anchor {
@@ -327,11 +329,12 @@ fn build_anchor_path_with_union_ranges() {
 fn build_anchor_explicit_blob_type_with_union_ranges() {
     let (_dir, repo) = repo_with_file();
     let blob_oid = blob_oid_for_path(&repo, "hello.txt").unwrap();
+    let oid_str = blob_oid.to_string();
     let anchor = crate::exe::build_anchor(
         &repo,
-        Some(blob_oid.to_string()),
-        Some("blob".to_string()),
-        Some("1-5,10-15".to_string()),
+        Some(&oid_str),
+        Some("blob"),
+        Some("1-5,10-15"),
     )
     .unwrap();
     match anchor {
@@ -346,10 +349,11 @@ fn build_anchor_explicit_blob_type_with_union_ranges() {
 fn build_anchor_unknown_type_errors() {
     let (_dir, repo) = repo();
     let commit_oid = repo.head().unwrap().peel_to_commit().unwrap().id();
+    let oid_str = commit_oid.to_string();
     let result = crate::exe::build_anchor(
         &repo,
-        Some(commit_oid.to_string()),
-        Some("bogus".to_string()),
+        Some(&oid_str),
+        Some("bogus"),
         None,
     );
     assert!(result.is_err());
@@ -358,7 +362,7 @@ fn build_anchor_unknown_type_errors() {
 #[test]
 fn build_anchor_bad_oid_and_bad_path_errors() {
     let (_dir, repo) = repo();
-    let result = crate::exe::build_anchor(&repo, Some("not-an-oid-or-path".to_string()), None, None);
+    let result = crate::exe::build_anchor(&repo, Some("not-an-oid-or-path"), None, None);
     assert!(result.is_err());
 }
 
@@ -380,9 +384,9 @@ fn build_anchor_malformed_range_errors() {
     let (_dir, repo) = repo_with_file();
     let result = crate::exe::build_anchor(
         &repo,
-        Some("hello.txt".to_string()),
+        Some("hello.txt"),
         None,
-        Some("abc".to_string()),
+        Some("abc"),
     );
     assert!(result.is_err());
 }
@@ -392,9 +396,9 @@ fn build_anchor_inverted_range_errors() {
     let (_dir, repo) = repo_with_file();
     let result = crate::exe::build_anchor(
         &repo,
-        Some("hello.txt".to_string()),
+        Some("hello.txt"),
         None,
-        Some("5-1".to_string()),
+        Some("5-1"),
     );
     assert!(result.is_err());
 }
@@ -404,9 +408,9 @@ fn build_anchor_zero_based_range_errors() {
     let (_dir, repo) = repo_with_file();
     let result = crate::exe::build_anchor(
         &repo,
-        Some("hello.txt".to_string()),
+        Some("hello.txt"),
         None,
-        Some("0-5".to_string()),
+        Some("0-5"),
     );
     assert!(result.is_err());
 }

@@ -1,5 +1,7 @@
 //! `git2::Repository` implementation of [`Comments`].
 
+use std::fmt::Write as _;
+
 use git2::Repository;
 
 use crate::{Anchor, Comment, Comments};
@@ -56,11 +58,10 @@ fn parse_trailers(msg: &str) -> Trailers {
 fn body_from_message(msg: &str) -> String {
     let is_trailer = |line: &str| -> bool {
         line.find(": ")
-            .map(|pos| {
+            .is_some_and(|pos| {
                 let key = &line[..pos];
                 !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '-')
             })
-            .unwrap_or(false)
     };
 
     if let Some(split) = msg.rfind("\n\n") {
@@ -117,16 +118,15 @@ fn build_message(
 
     match anchor {
         Anchor::Blob { oid, line_ranges } => {
-            msg.push_str(&format!("Anchor: {oid}\n"));
+            writeln!(msg, "Anchor: {oid}").expect("writing to a String is infallible");
             if !line_ranges.is_empty() {
-                msg.push_str(&format!("Anchor-Range: {}\n", format_ranges(line_ranges)));
+                writeln!(msg, "Anchor-Range: {}", format_ranges(line_ranges)).expect("writing to a String is infallible");
             }
         }
-        Anchor::Commit(oid) => msg.push_str(&format!("Anchor: {oid}\n")),
-        Anchor::Tree(oid) => msg.push_str(&format!("Anchor: {oid}\n")),
+        Anchor::Commit(oid) | Anchor::Tree(oid) => writeln!(msg, "Anchor: {oid}").expect("writing to a String is infallible"),
         Anchor::CommitRange { start, end } => {
-            msg.push_str(&format!("Anchor: {start}\n"));
-            msg.push_str(&format!("Anchor-End: {end}\n"));
+            writeln!(msg, "Anchor: {start}").expect("writing to a String is infallible");
+            writeln!(msg, "Anchor-End: {end}").expect("writing to a String is infallible");
         }
     }
 
@@ -135,7 +135,7 @@ fn build_message(
     }
 
     if let Some(oid) = replaces {
-        msg.push_str(&format!("Replaces: {oid}\n"));
+        writeln!(msg, "Replaces: {oid}").expect("writing to a String is infallible");
     }
 
     msg
@@ -171,6 +171,10 @@ fn append_commit(
 }
 
 /// Resolve a path to a blob OID by looking it up in HEAD's tree.
+///
+/// # Errors
+///
+/// Returns an error if the path does not resolve to a blob or if the repository operation fails.
 pub fn blob_oid_for_path(repo: &Repository, path_str: &str) -> Result<git2::Oid, git2::Error> {
     let tree = repo.head()?.peel_to_tree()?;
     let entry = tree.get_path(std::path::Path::new(path_str))?;
