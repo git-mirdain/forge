@@ -363,6 +363,19 @@ fn build_anchor_bad_oid_and_bad_path_errors() {
 }
 
 #[test]
+fn edit_chain_replaces_points_at_previous_edit() {
+    let (_dir, repo) = repo();
+    let rn = ref_name();
+    let anchor = dummy_anchor(&repo);
+    let original_oid = repo.add_comment(&rn, &anchor, "v1").unwrap();
+    let edit1_oid = repo.edit_comment(&rn, original_oid, "v2").unwrap();
+    let edit2_oid = repo.edit_comment(&rn, edit1_oid, "v3").unwrap();
+    let edit2 = repo.find_comment(&rn, edit2_oid).unwrap().unwrap();
+    assert_eq!(edit2.replaces_oid, Some(edit1_oid));
+    assert_eq!(edit2.body, "v3");
+}
+
+#[test]
 fn build_anchor_malformed_range_errors() {
     let (_dir, repo) = repo_with_file();
     let result = crate::exe::build_anchor(
