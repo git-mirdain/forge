@@ -361,3 +361,39 @@ fn build_anchor_bad_oid_and_bad_path_errors() {
     let result = crate::exe::build_anchor(&repo, Some("not-an-oid-or-path".to_string()), None, None);
     assert!(result.is_err());
 }
+
+#[test]
+fn build_anchor_malformed_range_errors() {
+    let (_dir, repo) = repo_with_file();
+    let result = crate::exe::build_anchor(
+        &repo,
+        Some("hello.txt".to_string()),
+        None,
+        Some("abc".to_string()),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn build_anchor_inverted_range_errors() {
+    let (_dir, repo) = repo_with_file();
+    let result = crate::exe::build_anchor(
+        &repo,
+        Some("hello.txt".to_string()),
+        None,
+        Some("5-1".to_string()),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn build_anchor_zero_based_range_errors() {
+    let (_dir, repo) = repo_with_file();
+    let result = crate::exe::build_anchor(
+        &repo,
+        Some("hello.txt".to_string()),
+        None,
+        Some("0-5".to_string()),
+    );
+    assert!(result.is_err());
+}
