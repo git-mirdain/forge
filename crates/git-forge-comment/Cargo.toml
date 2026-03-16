@@ -6,6 +6,16 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+clap = { workspace = true }
+git2 = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "comments"
+harness = false
 
 [lints]
 workspace = true

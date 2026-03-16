@@ -9,27 +9,23 @@ use crate::{IssueState, Issues};
 
 /// Resolve the editor to use, matching Git's own precedence:
 /// `GIT_EDITOR` → `core.editor` (git config) → `VISUAL` → `EDITOR` → `"vi"`.
-fn resolve_editor(repo: &git2::Repository) -> Result<String, Box<dyn std::error::Error>> {
-    if let Ok(val) = std::env::var("GIT_EDITOR") {
-        if !val.is_empty() {
-            return Ok(val);
+fn resolve_editor(repo: &git2::Repository) -> String {
+    if let Ok(val) = std::env::var("GIT_EDITOR")
+        && !val.is_empty() {
+            return val;
         }
-    }
-    if let Ok(cfg) = repo.config() {
-        if let Ok(val) = cfg.get_string("core.editor") {
-            if !val.is_empty() {
-                return Ok(val);
+    if let Ok(cfg) = repo.config()
+        && let Ok(val) = cfg.get_string("core.editor")
+            && !val.is_empty() {
+                return val;
             }
-        }
-    }
     for var in &["VISUAL", "EDITOR"] {
-        if let Ok(val) = std::env::var(var) {
-            if !val.is_empty() {
-                return Ok(val);
+        if let Ok(val) = std::env::var(var)
+            && !val.is_empty() {
+                return val;
             }
-        }
     }
-    Ok("vi".to_string())
+    "vi".to_string()
 }
 
 /// Parse issue template with TOML frontmatter.
@@ -42,10 +38,7 @@ fn parse_issue_template(content: &str) -> Result<(String, String), Box<dyn std::
 
     // Find the closing +++
     let rest = &content[4..];
-    let closing_pos = match rest.find("\n+++\n") {
-        Some(pos) => pos,
-        None => return Err("Could not find closing +++".into()),
-    };
+    let Some(closing_pos) = rest.find("\n+++\n") else { return Err("Could not find closing +++".into()) };
 
     let frontmatter = &rest[..closing_pos];
     let body_start = closing_pos + 5; // length of "\n+++\n"
@@ -55,8 +48,7 @@ fn parse_issue_template(content: &str) -> Result<(String, String), Box<dyn std::
     let title = frontmatter
         .lines()
         .find_map(|line| {
-            if line.starts_with("title = ") {
-                let title_str = &line[8..];
+            if let Some(title_str) = line.strip_prefix("title = ") {
                 // Remove quotes
                 if (title_str.starts_with('"') && title_str.ends_with('"'))
                     || (title_str.starts_with('\'') && title_str.ends_with('\''))
@@ -147,7 +139,7 @@ impl Executor {
         use std::process::Command;
 
         let repo = self.repo();
-        let editor = resolve_editor(repo)?;
+        let editor = resolve_editor(repo);
 
         let edit_path = repo.path().join("ISSUE_EDITMSG");
         let template = "+++\ntitle = \"\"\n+++\n\n";
@@ -243,24 +235,18 @@ impl Executor {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_inner(command: IssueCommand) -> Result<(), Box<dyn std::error::Error>> {
     let executor = Executor::from_env()?;
 
     match command {
-        IssueCommand::New {
-            title,
-            body,
-            label,
-            assignee,
-            interactive,
-        } => {
-            if interactive {
+        IssueCommand::New { title, body, label, assignee } => {
+            use std::io::IsTerminal;
+            if title.is_none() && std::io::stdin().is_terminal() {
                 let id = executor.create_issue_interactive()?;
                 eprintln!("Created issue #{id}");
             } else {
-                let title = title
-                    .as_deref()
-                    .ok_or("Title is required (or use --interactive)")?;
+                let title = title.as_deref().ok_or("Title is required")?;
                 let body = if let Some(b) = body {
                     b
                 } else {
@@ -295,13 +281,33 @@ fn run_inner(command: IssueCommand) -> Result<(), Box<dyn std::error::Error>> {
                 || state.is_some();
 
             // Default to interactive when no fields provided
-            if !has_fields {
+            if has_fields {
+                let labels = if label.is_empty() { None } else { Some(label) };
+                let assignees = if assignee.is_empty() {
+                    None
+                } else {
+                    Some(assignee)
+                };
+                let issue_state = state.map(|s| match s {
+                    StateArg::Open => IssueState::Open,
+                    StateArg::Closed => IssueState::Closed,
+                });
+                executor.edit_issue(
+                    id,
+                    title.as_deref(),
+                    body.as_deref(),
+                    labels.as_deref(),
+                    assignees.as_deref(),
+                    issue_state,
+                )?;
+                eprintln!("Updated issue #{id}.");
+            } else {
                 use std::fs;
                 use std::io::Write;
                 use std::process::Command;
 
                 let repo = executor.repo();
-                let editor = resolve_editor(repo)?;
+                let editor = resolve_editor(repo);
 
                 // Fetch the current issue
                 let issue = repo
@@ -335,26 +341,6 @@ fn run_inner(command: IssueCommand) -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 repo.update_issue(id, Some(&title), Some(&body), None, None, None, None)?;
-                eprintln!("Updated issue #{id}.");
-            } else {
-                let labels = if label.is_empty() { None } else { Some(label) };
-                let assignees = if assignee.is_empty() {
-                    None
-                } else {
-                    Some(assignee)
-                };
-                let issue_state = state.map(|s| match s {
-                    StateArg::Open => IssueState::Open,
-                    StateArg::Closed => IssueState::Closed,
-                });
-                executor.edit_issue(
-                    id,
-                    title.as_deref(),
-                    body.as_deref(),
-                    labels.as_deref(),
-                    assignees.as_deref(),
-                    issue_state,
-                )?;
                 eprintln!("Updated issue #{id}.");
             }
         }

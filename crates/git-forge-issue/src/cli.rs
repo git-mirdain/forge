@@ -7,10 +7,10 @@ use clap::Subcommand;
 pub enum IssueCommand {
     /// Open a new issue.
     New {
-        /// Issue title. Omit for interactive mode.
+        /// Issue title. Omit to open an editor (in an interactive shell).
         title: Option<String>,
 
-        /// Issue body (markdown). Reads from stdin if omitted.
+        /// Issue body (markdown). Reads from stdin if omitted in a non-interactive shell.
         #[arg(short, long)]
         body: Option<String>,
 
@@ -21,10 +21,6 @@ pub enum IssueCommand {
         /// Assignees (fingerprints or names).
         #[arg(short, long)]
         assignee: Vec<String>,
-
-        /// Open an interactive editor to compose the issue.
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        interactive: bool,
     },
 
     /// Edit an existing issue.

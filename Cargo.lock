@@ -398,6 +398,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "clap_mangen",
+ "git-forge-comment",
  "git-forge-core",
  "git-forge-issue",
  "git-forge-release",
@@ -409,6 +410,12 @@ dependencies = [
 [[package]]
 name = "git-forge-comment"
 version = "0.0.0"
+dependencies = [
+ "clap",
+ "criterion",
+ "git2",
+ "tempfile",
+]
 
 [[package]]
 name = "git-forge-core"
@@ -424,6 +431,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "criterion",
+ "git-forge-comment",
  "git2",
  "tempfile",
 ]

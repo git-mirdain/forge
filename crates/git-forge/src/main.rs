@@ -20,6 +20,7 @@ fn main() {
         Commands::Issue { command } => git_forge_issue::exe::run(command),
         Commands::Review { command } => git_forge_review::exe::run(command),
         Commands::Release { command } => git_forge_release::exe::run(command),
+        Commands::Comment { command } => git_forge_comment::exe::run(command),
     }
 }
 

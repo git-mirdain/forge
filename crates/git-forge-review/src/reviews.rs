@@ -1,11 +1,11 @@
-//! Review refs under `refs/meta/reviews/`.
+//! Review refs under `refs/forge/review/`.
 //!
 //! A review is a coordination entity — "please look at commits X..Y." It
 //! references commits but is not metadata on any commit. It has its own
 //! lifecycle independent of the commits it covers.
 //!
 //! ```text
-//! refs/meta/reviews/<review-id> → commit → tree
+//! refs/forge/review/<review-id> → commit → tree
 //! ├── meta            # toml: author, target_branch, state, created
 //! ├── description     # markdown
 //! └── revisions/
@@ -25,7 +25,7 @@
 pub mod git2;
 
 /// Ref prefix under which review refs are stored.
-pub const REVIEWS_REF_PREFIX: &str = "refs/meta/reviews/";
+pub const REVIEWS_REF_PREFIX: &str = "refs/forge/review/";
 
 /// The lifecycle state of a review.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

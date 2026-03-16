@@ -1,6 +1,7 @@
 //! The CLI definitions for the top-level `git forge` command.
 
 use clap::{Parser, Subcommand};
+use git_forge_comment::cli::CommentCommand;
 use git_forge_issue::cli::IssueCommand;
 use git_forge_release::cli::ReleaseCommand;
 use git_forge_review::cli::ReviewCommand;
@@ -35,5 +36,11 @@ pub enum Commands {
         /// The release subcommand to run.
         #[command(subcommand)]
         command: ReleaseCommand,
+    },
+    /// Work with comments on issues and reviews.
+    Comment {
+        /// The comment subcommand to run.
+        #[command(subcommand)]
+        command: CommentCommand,
     },
 }
