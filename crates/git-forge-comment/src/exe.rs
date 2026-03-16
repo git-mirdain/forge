@@ -9,12 +9,10 @@ use crate::cli::CommentCommand;
 use crate::{Anchor, Comments, COMMENTS_REF_PREFIX};
 
 fn parse_target(target: &str) -> Result<String, Box<dyn Error>> {
-    if let Some(rest) = target.strip_prefix("issue/") {
-        Ok(format!("{COMMENTS_REF_PREFIX}issues/{rest}"))
-    } else if let Some(rest) = target.strip_prefix("review/") {
-        Ok(format!("{COMMENTS_REF_PREFIX}reviews/{rest}"))
+    if target.contains('/') {
+        Ok(format!("{COMMENTS_REF_PREFIX}{target}"))
     } else {
-        Err(format!("unrecognized target prefix: {target:?}; expected \"issue/<id>\" or \"review/<id>\"").into())
+        Err(format!("invalid target {target:?}: expected \"<kind>/<id>\" (e.g. \"issue/1\", \"commit/<sha>\", \"blob/<sha>\")").into())
     }
 }
 
@@ -42,7 +40,7 @@ impl Executor {
         &self.0
     }
 
-    pub fn add_comment(
+    pub fn new_comment(
         &self,
         target: &str,
         body: &str,
@@ -98,6 +96,42 @@ impl Executor {
         }
         Ok(())
     }
+
+    pub fn view_comment(&self, target: &str, comment_oid_str: &str) -> Result<(), Box<dyn Error>> {
+        let ref_name = parse_target(target)?;
+        let repo = self.repo();
+        let oid = git2::Oid::from_str(comment_oid_str)
+            .map_err(|e| format!("invalid comment OID {comment_oid_str:?}: {e}"))?;
+        let comment = repo
+            .find_comment(&ref_name, oid)?
+            .ok_or_else(|| format!("comment {comment_oid_str} not found"))?;
+
+        println!("commit {}", comment.oid);
+        match &comment.anchor {
+            Anchor::Blob { oid, line_range } => {
+                if let Some((s, e)) = line_range {
+                    println!("anchor: blob {oid} lines {s}-{e}");
+                } else {
+                    println!("anchor: blob {oid}");
+                }
+            }
+            Anchor::Commit(oid) => println!("anchor: commit {oid}"),
+            Anchor::Tree(oid) => println!("anchor: tree {oid}"),
+            Anchor::CommitRange { start, end } => println!("anchor: commits {start}..{end}"),
+        }
+        if let Some(p) = comment.parent_oid {
+            println!("parent: {p}");
+        }
+        if comment.resolved {
+            println!("resolved: true");
+        }
+        println!();
+        print!("{}", comment.body);
+        if !comment.body.ends_with('\n') {
+            println!();
+        }
+        Ok(())
+    }
 }
 
 fn build_anchor(
@@ -142,9 +176,9 @@ fn run_inner(command: CommentCommand) -> Result<(), Box<dyn Error>> {
     let executor = Executor::from_env()?;
 
     match command {
-        CommentCommand::Add { target, body, anchor, anchor_type, range } => {
+        CommentCommand::New { target, body, anchor, anchor_type, range } => {
             let body = read_body(body)?;
-            let oid = executor.add_comment(&target, &body, anchor, anchor_type, range)?;
+            let oid = executor.new_comment(&target, &body, anchor, anchor_type, range)?;
             println!("{oid}");
         }
 
@@ -161,6 +195,10 @@ fn run_inner(command: CommentCommand) -> Result<(), Box<dyn Error>> {
 
         CommentCommand::List { target } => {
             executor.list_comments(&target)?;
+        }
+
+        CommentCommand::View { target, comment } => {
+            executor.view_comment(&target, &comment)?;
         }
     }
 

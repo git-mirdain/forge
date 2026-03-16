@@ -18,13 +18,13 @@ pub const COMMENTS_REF_PREFIX: &str = "refs/forge/comments/";
 /// Returns the ref name for comments on a specific issue.
 #[must_use]
 pub fn issue_comments_ref(id: u64) -> String {
-    format!("{COMMENTS_REF_PREFIX}issues/{id}")
+    format!("{COMMENTS_REF_PREFIX}issue/{id}")
 }
 
 /// Returns the ref name for comments on a specific review (pull request).
 #[must_use]
 pub fn review_comments_ref(id: u64) -> String {
-    format!("{COMMENTS_REF_PREFIX}reviews/{id}")
+    format!("{COMMENTS_REF_PREFIX}review/{id}")
 }
 
 /// The location within a Git object that a comment targets.

@@ -1,9 +1,9 @@
-//! Issue refs under `refs/meta/issues/`.
+//! Issue refs under `refs/forge/issue/`.
 //!
 //! An issue is a standalone ref with its own lifecycle:
 //!
 //! ```text
-//! refs/issue/<issue-id> → commit → tree
+//! refs/forge/issue/<issue-id> → commit → tree
 //! ├── author          # plain text: fingerprint
 //! ├── title           # plain text: single-line title
 //! ├── state           # plain text: "open" or "closed"
@@ -28,7 +28,7 @@ pub mod exe;
 pub mod git2;
 
 /// Ref prefix under which issue refs are stored.
-pub const ISSUES_REF_PREFIX: &str = "refs/issue/";
+pub const ISSUES_REF_PREFIX: &str = "refs/forge/issue/";
 
 /// Options for issue operations, allowing customization of the ref prefix.
 #[derive(Clone, Debug)]

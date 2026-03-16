@@ -22,7 +22,7 @@ fn dummy_anchor(repo: &Repository) -> Anchor {
 }
 
 fn ref_name() -> String {
-    format!("{COMMENTS_REF_PREFIX}issues/1")
+    format!("{COMMENTS_REF_PREFIX}issue/1")
 }
 
 #[test]

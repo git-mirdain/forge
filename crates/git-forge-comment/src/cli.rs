@@ -5,16 +5,16 @@ use clap::Subcommand;
 /// Subcommands for `git forge comment`.
 #[derive(Subcommand, Clone)]
 pub enum CommentCommand {
-    /// Add a comment to an issue or review.
-    Add {
-        /// Target: "issue/<id>" or "review/<id>".
+    /// Add a new comment to any git object.
+    New {
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", "blob/<sha>", etc.
         target: String,
 
         /// Comment body (markdown). Reads from stdin if omitted.
         #[arg(short, long)]
         body: Option<String>,
 
-        /// Blob SHA being commented on.
+        /// Object SHA being commented on (defaults to HEAD commit).
         #[arg(long)]
         anchor: Option<String>,
 
@@ -22,14 +22,14 @@ pub enum CommentCommand {
         #[arg(long)]
         anchor_type: Option<String>,
 
-        /// Line range, e.g. "42-47" (blob anchors only).
+        /// Line range within a blob, e.g. "42-47".
         #[arg(long)]
         range: Option<String>,
     },
 
     /// Reply to an existing comment.
     Reply {
-        /// Target: "issue/<id>" or "review/<id>".
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
         target: String,
 
         /// OID of the comment to reply to.
@@ -42,7 +42,7 @@ pub enum CommentCommand {
 
     /// Resolve a comment thread.
     Resolve {
-        /// Target: "issue/<id>" or "review/<id>".
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
         target: String,
 
         /// OID of the comment to resolve.
@@ -53,9 +53,18 @@ pub enum CommentCommand {
         message: Option<String>,
     },
 
-    /// List comments.
+    /// List comments on a target.
     List {
-        /// Target: "issue/<id>" or "review/<id>".
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
         target: String,
+    },
+
+    /// Show a single comment in full.
+    View {
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
+        target: String,
+
+        /// OID of the comment to view.
+        comment: String,
     },
 }
