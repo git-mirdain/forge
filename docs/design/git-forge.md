@@ -31,7 +31,7 @@ Entities (issues, reviews) use sequential integer IDs.
 A counter ref tracks the next available ID per entity type:
 
 ```text
-refs/meta/counters → commit → tree
+refs/forge/meta/counters → commit → tree
 ├── issues          # plain text: "47"
 ├── reviews         # plain text: "103"
 ```
@@ -47,10 +47,10 @@ The choice depends on the server environment.
 **Pure Git (no server logic).**
 Optimistic concurrency via `git push --atomic` and `--force-with-lease`:
 
-1. Fetch `refs/meta/counters`, read current value N.
+1. Fetch `refs/forge/meta/counters`, read current value N.
 2. Create the entity commit locally.
-3. Commit N+1 to the counter ref locally.
-4. `git push --atomic --force-with-lease=refs/meta/counters:<expected-oid> refs/meta/counters refs/meta/issues/<N+1>`
+3. Commit N+1 to `refs/forge/meta/counters` locally.
+4. `git push --atomic --force-with-lease=refs/forge/meta/counters:<expected-oid> refs/forge/meta/counters refs/forge/issue/<N+1>`
 5. If rejected (someone else incremented), retry from step 1.
 
 `--atomic` ensures all ref updates succeed or none do.
@@ -62,7 +62,7 @@ The client pushes to an inbox ref.
 The server's post-receive hook reads the commit, assigns the next integer, creates the canonical ref, and deletes the inbox ref:
 
 1. User pushes to `refs/inbox/<fingerprint>/issues/<anything>`.
-2. Server post-receive hook reads it, assigns the next integer, creates `refs/meta/issues/<N+1>`, deletes the inbox ref.
+2. Server post-receive hook reads it, assigns the next integer, creates `refs/forge/issue/<N+1>`, deletes the inbox ref.
 3. Returns the assigned ID to the user (post-receive hook output goes back to the pusher over the transport).
 
 **UI server (direct repo access).**
@@ -70,85 +70,30 @@ The UI has filesystem access.
 Lock the counter file, increment, write the entity ref, unlock.
 No CAS retry loop, no hooks.
 
-External contributors always use the inbox path — they cannot write to `refs/meta/counters`.
+External contributors always use the inbox path — they cannot write to `refs/forge/meta/counters`.
 
 
 ## Annotations
 
 ### Comments
 
-A comment is an annotation on a blob, anchored to a line range.
-Comments are repo-wide — they are not owned by a review or an issue.
-A review may prompt someone to leave a comment, but the comment exists independently and persists as long as the code it describes exists.
-
-Comments are stored as `git-metadata` entries on blob oids:
+A comment is a Git commit object stored under `refs/forge/comments/`.
+Comments anchor to any Git object — blobs, commits, trees, or commit ranges — and support threading through the DAG.
+See `docs/design/git-forge-comments.md` for the full data model, ref structure, threading, payloads, and plumbing examples.
 
 ```text
-refs/metadata/comments   (fanout by blob oid)
-  <blob-oid>/
-    <comment-id>/
-      meta          # toml: author (fingerprint), timestamp, start_line,
-                    #       end_line, context_lines
-      body          # markdown
-      resolved      # toml: by, timestamp — presence means resolved
-      reply/
-        001         # toml: author, timestamp, body
-        002
+refs/forge/comments/issue/<id>       # comments on issues
+refs/forge/comments/review/<id>      # comments on code reviews
+refs/forge/comments/object           # comments on raw git objects (commits, blobs, trees)
 ```
 
-The `context_lines` field stores a few lines surrounding the anchored range.
-This is the fallback for relocation when blame is ambiguous.
+Each ref points to the tip of a chronological commit chain.
+Anchor information is carried as trailers in the commit message (`Anchor`, `Anchor-Type`, `Anchor-Range`, `Anchor-End`, `Resolved`, `Replaces`).
+Threading uses second parents: a reply's second parent points at the comment it replies to.
+Comments are immutable — edits and resolutions are new commits appended to the chain.
 
 Relationships to other entities (issues, reviews, commits) are stored as relational metadata, not embedded in the comment.
 See the Relational Metadata section.
-
-#### Reanchoring
-
-Comments are anchored to a specific blob oid and line range.
-When a new commit changes a file, the anchored blob oid no longer appears in the current tree.
-The comment must be reanchored to the new blob.
-
-A reanchoring process (server-side post-receive hook, local daemon, or explicit CLI command) runs on every new commit:
-
-1. Diff the commit to get changed files.
-2. Filter to files with existing comments (index lookup by blob oid).
-3. Blame those files in the new tree.
-4. For each comment on an old blob oid, find where those lines now live in the new blob.
-5. Write a new anchor: update the comment's metadata with the new blob oid and line range.
-
-Each reanchoring is a new commit on the `refs/metadata/comments` ref.
-The commit history records where the comment has traveled.
-
-If blame says the lines were deleted, the comment becomes orphaned.
-This is meaningful — the code was removed or rewritten.
-An orphaned comment surfaces as "detached" in the UI.
-Someone should explicitly resolve it or the author of the change should address it.
-
-Same-file blame only.
-Cross-file moves (extractions, renames) orphan the comment.
-This is a conservative default.
-Chasing moves across files relies on blame heuristics (`-C`) that can silently misattribute.
-Better to orphan and let a human re-anchor than to silently drift to wrong code.
-
-The cost of reanchoring is proportional to `(files changed in commit) ∩ (files with comments)`.
-This is almost always a small set.
-
-If the daemon is not running, comments still work.
-They remain anchored to their last-known blob oid and show as stale until something reanchors them.
-No correctness problem, just degraded experience.
-
-#### Querying
-
-The hot path is "show me all comments on this file."
-The viewer:
-
-1. Blames the current file — gets (blob oid, line range) pairs for every line.
-2. Collects the set of blob oids.
-3. Reads `refs/metadata/comments` for entries matching those oids.
-4. Maps each comment's line range onto current file positions.
-
-This requires an index from blob oid to comment entries.
-The `git-metadata` fanout structure provides this directly — the tree is keyed by blob oid.
 
 
 ### Approvals
@@ -292,18 +237,21 @@ An issue is a standalone ref with its own lifecycle.
 It is not metadata on any object — it is an entity.
 
 ```text
-refs/meta/issues/<issue-id> → commit → tree
-├── meta            # toml: author, title, state, labels, assignees, created
+refs/forge/issue/<issue-id> → commit → tree
+├── author          # plain text: fingerprint
+├── title           # plain text: single-line title
+├── state           # plain text: "open" or "closed"
+├── labels/         # dir: empty blobs whose names are the labels
 ├── body            # markdown
-├── comments/
-│   ├── 001-<ts>-<fingerprint>      # markdown
-│   ├── 002-<ts>-<fingerprint>
-│   └── ...
+└── comments/
+    ├── 001-<ts>-<fingerprint>      # markdown
+    ├── 002-<ts>-<fingerprint>
+    └── ...
 ```
 
 Each mutation — state change, new comment, label update, assignment — is a new commit on the issue's ref.
 The commit history is the issue's audit log.
-`git log refs/meta/issues/<id>` shows every change, who made it, and when.
+`git log refs/forge/issue/<id>` shows every change, who made it, and when.
 
 Issue comments are conversation within the issue.
 They are not the same as code comments.
@@ -335,7 +283,7 @@ It references commits but is not metadata on any commit.
 It has its own lifecycle independent of the commits it covers.
 
 ```text
-refs/meta/reviews/<review-id> → commit → tree
+refs/forge/review/<review-id> → commit → tree
 ├── meta            # toml: author, target_branch, state, created
 ├── description     # markdown
 ├── revisions/
@@ -351,7 +299,7 @@ State is `open`, `merged`, or `closed`.
 
 A review does not contain comments or approvals.
 It prompts them.
-Comments land on blob oids (via `git-metadata`).
+Comments land under `refs/forge/comments/review/<id>`.
 Approvals land on patch-ids, range patch-ids, blob oids, or tree oids (via `git-metadata`).
 The review is how you discover which commits to look at.
 The comments and approvals are what you find when you look.
@@ -379,7 +327,7 @@ Check definitions live in the repository, versioned with the code:
 name = "build"
 image = "rust:1.85"
 run = "cargo build --release"
-triggers = ["refs/heads/*", "refs/meta/queue/*"]
+triggers = ["refs/heads/*", "refs/forge/queue/*"]
 secrets = [
   { name = "CARGO_REGISTRY_TOKEN", type = "file" },
 ]
@@ -534,7 +482,7 @@ This is an honest exception to the "everything is a ref" principle.
 Every secret read/write/grant event is logged to a server-maintained ref:
 
 ```text
-refs/meta/audit/secrets → commit → tree
+refs/forge/meta/audit/secrets → commit → tree
 ├── 001-<ts>    # toml: action, secret_name, actor_fingerprint
 ├── 002-<ts>
 ```
@@ -550,7 +498,7 @@ The history of who touched what is in Git and signed.
 Contributors are stored in a ref:
 
 ```text
-refs/meta/contributors → commit → tree
+refs/forge/contributors → commit → tree
 ├── <fingerprint>/
 │   ├── key.pub         # SSH or GPG public key
 │   ├── meta            # toml: name, email, added_by, timestamp
@@ -636,7 +584,7 @@ modify = { require_role = "admin", require_review = true }
 
 ### External Contributors
 
-External contributors have no key in `refs/meta/contributors`.
+External contributors have no key in `refs/forge/contributors`.
 They cannot push to the repo directly.
 
 The pre-receive hook allows anyone with a valid signature to push to a scoped inbox namespace:
@@ -696,7 +644,7 @@ The pre-receive hook enforces policy on pushes to protected branches:
 The merge queue is a ref containing an ordered list of entries:
 
 ```text
-refs/meta/queue/merge → commit → tree
+refs/forge/queue/merge → commit → tree
 ├── 001-<review-id>     # toml: head_commit, submitted_by, timestamp
 ├── 002-<review-id>
 └── ...
@@ -788,17 +736,17 @@ One push, multiple operations.
 
 ### Creating a Review
 
-A developer pushes a branch and runs `git forge review request`.
+A developer pushes a branch and runs `git forge review new`.
 This:
 
 1. Generates a review ID (via the counter protocol).
-2. Creates `refs/meta/reviews/<review-id>` with metadata pointing at the branch's commit range relative to the target branch.
+2. Creates `refs/forge/review/<review-id>` with metadata pointing at the branch's commit range relative to the target branch.
 3. Records revision 001 with the current head commit.
 
 ### Updating a Review
 
 The developer pushes new commits or rebases.
-They run `git forge review update` (or the daemon detects the branch update).
+They run `git forge review edit` (or the daemon detects the branch update).
 A new revision entry is added to the review ref.
 
 ### Reviewing
@@ -808,7 +756,7 @@ The tooling:
 
 1. Reads the review ref to get the commit range.
 2. Shows the diffs.
-3. Comments land as `git-metadata` on blob oids (not on the review).
+3. Comments land under `refs/forge/comments/review/<id>` (not embedded in the review ref).
 4. Approvals land as `git-metadata` on patch-ids, range patch-ids, blob oids, or tree oids (not on the review).
 
 ### Merging
@@ -853,7 +801,7 @@ Given the commits since the last release, Forge determines the version bump, app
 
 ```text
 refs/tags/v1.2.0            → signed commit
-refs/meta/releases/v1.2.0   → tree
+refs/forge/releases/v1.2.0  → tree
 ├── meta                     # toml: version, date, author
 ├── changelog                # markdown
 ├── artifacts/
@@ -937,68 +885,75 @@ Correctness never depends on the UI's indexes — they can always be rebuilt fro
 
 ```text
 git forge
-├── review
-│   ├── request
-│   ├── update
-│   ├── list
-│   ├── show <id>
-│   ├── approve [<id>]
-│   ├── comment <file>:<line-range> [-m message]
-│   └── resolve <comment-id>
-│
 ├── issue
-│   ├── create <title>
-│   ├── list
-│   ├── show <id>
-│   ├── close <id>
-│   ├── reopen <id>
-│   ├── comment <id> [-m message]
-│   ├── assign <id> <user>
-│   └── label <id> <label>
+│   ├── new [title] [--body] [--label ...] [--assignee ...]
+│   ├── edit <id> [--title] [--body] [--label ...] [--assignee ...] [--state]
+│   ├── list [--state {open|closed}]
+│   ├── status <id>
+│   └── show <id>
 │
-├── check
+├── comment
+│   ├── new [target] [--body] [--anchor] [--anchor-type] [--range]
+│   ├── reply [target] <comment> [--body]
+│   ├── edit [target] <comment> [--body]
+│   ├── resolve [target] <comment> [--message]
+│   ├── list [target]
+│   └── view [target] <comment>
+│
+├── review                (not yet implemented)
+│   ├── new
+│   ├── edit
+│   ├── list
+│   ├── status
+│   └── show
+│
+├── release               (not yet implemented)
+│   ├── new
+│   ├── edit
+│   ├── list
+│   ├── status
+│   └── show
+│
+├── check                 (planned)
 │   ├── run <name>
 │   ├── status <commit>
 │   └── list
 │
-├── release
-│   ├── prepare
-│   ├── publish
-│   ├── list
-│   └── show <tag>
-│
-├── queue
+├── queue                 (planned)
 │   ├── create <name>
 │   ├── push <name> <ref>
 │   ├── pop <name>
 │   ├── list <name>
 │   └── peek <name>
 │
-├── contributor
+├── contributor           (planned)
 │   ├── add <key-file> [--role=<role>]
 │   ├── list
 │   ├── remove <fingerprint>
 │   └── role <fingerprint> <role>
 │
-├── secret
+├── secret                (planned)
 │   ├── set <name> [--value=... | --file=...]
 │   ├── list
 │   ├── grant <name> --runner=<fingerprint>
 │   └── revoke <name> --runner=<fingerprint>
 │
-├── sync
+├── sync                  (planned)
 │   ├── github --repo=<org/project> --import
 │   └── ...
 │
-└── config
-    ├── show
-    └── edit
+├── config                (planned)
+│   ├── show
+│   └── edit
+│
+└── install [remote] [--global]
 ```
+
+`target` for `comment` subcommands is `"issue/<id>"`, `"review/<id>"`, `"commit/<sha>"`, `"blob/<sha>"`, etc.
+Defaults to `"commit/<HEAD>"` when omitted.
 
 All list commands support `--json`.
 Every subcommand maps to a ref operation (except `secret`, which is a server API call).
-
-`git forge review comment` is sugar for `git metadata add` on the appropriate blob oid with the comment tree structure. `git forge review approve` is sugar for `git metadata add` on the patch-ids and range patch-id in the review's range.
 
 
 ## Server

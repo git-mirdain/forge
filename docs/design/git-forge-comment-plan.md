@@ -1,5 +1,8 @@
 # `git-forge-comment` Development Plan
 
+> **Status: COMPLETED** — All steps have been implemented.
+> This document is historical.
+
 Each step is self-contained and ordered so that later steps build on earlier ones.
 Feed them sequentially to an agent.
 
