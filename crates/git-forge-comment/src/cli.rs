@@ -7,8 +7,8 @@ use clap::Subcommand;
 pub enum CommentCommand {
     /// Add a new comment to any git object.
     New {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", "blob/<sha>", etc.
-        target: String,
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", "blob/<sha>", etc. Defaults to "commit/<HEAD>".
+        target: Option<String>,
 
         /// Comment body (markdown). Opens an editor when omitted in an interactive shell.
         #[arg(short, long)]
@@ -29,8 +29,8 @@ pub enum CommentCommand {
 
     /// Reply to an existing comment.
     Reply {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
-        target: String,
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc. Defaults to "commit/<HEAD>".
+        target: Option<String>,
 
         /// OID of the comment to reply to.
         comment: String,
@@ -42,8 +42,8 @@ pub enum CommentCommand {
 
     /// Edit a comment (creates a new immutable comment with Replaces trailer).
     Edit {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
-        target: String,
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc. Defaults to "commit/<HEAD>".
+        target: Option<String>,
 
         /// OID of the comment to edit.
         comment: String,
@@ -55,8 +55,8 @@ pub enum CommentCommand {
 
     /// Resolve a comment thread.
     Resolve {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
-        target: String,
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc. Defaults to "commit/<HEAD>".
+        target: Option<String>,
 
         /// OID of the comment to resolve.
         comment: String,
@@ -68,14 +68,14 @@ pub enum CommentCommand {
 
     /// List comments on a target.
     List {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
-        target: String,
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc. Defaults to "commit/<HEAD>".
+        target: Option<String>,
     },
 
     /// Show a single comment in full.
     View {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc.
-        target: String,
+        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc. Defaults to "commit/<HEAD>".
+        target: Option<String>,
 
         /// OID of the comment to view.
         comment: String,

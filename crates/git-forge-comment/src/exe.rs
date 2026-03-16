@@ -52,6 +52,16 @@ fn open_editor_for_body(repo: &git2::Repository, initial: &str) -> Result<String
     Ok(body)
 }
 
+fn default_target(repo: &git2::Repository, target: Option<String>) -> Result<String, Box<dyn Error>> {
+    match target {
+        Some(t) => Ok(t),
+        None => {
+            let head = repo.head()?.peel_to_commit()?;
+            Ok(format!("commit/{}", head.id()))
+        }
+    }
+}
+
 fn parse_target(target: &str) -> Result<String, Box<dyn Error>> {
     if target.contains('/') {
         Ok(format!("{COMMENTS_REF_PREFIX}{target}"))
@@ -259,18 +269,21 @@ fn run_inner(command: CommentCommand) -> Result<(), Box<dyn Error>> {
 
     match command {
         CommentCommand::New { target, body, anchor, anchor_type, range } => {
+            let target = default_target(executor.repo(), target)?;
             let body = read_body(executor.repo(), body)?;
             let oid = executor.new_comment(&target, &body, anchor, anchor_type, range)?;
             println!("{oid}");
         }
 
         CommentCommand::Reply { target, comment, body } => {
+            let target = default_target(executor.repo(), target)?;
             let body = read_body(executor.repo(), body)?;
             let oid = executor.reply_to_comment(&target, &comment, &body)?;
             println!("{oid}");
         }
 
         CommentCommand::Edit { target, comment, body } => {
+            let target = default_target(executor.repo(), target)?;
             let repo = executor.repo();
             let ref_name = parse_target(&target)?;
             let comment_oid = git2::Oid::from_str(&comment)
@@ -289,15 +302,18 @@ fn run_inner(command: CommentCommand) -> Result<(), Box<dyn Error>> {
         }
 
         CommentCommand::Resolve { target, comment, message } => {
+            let target = default_target(executor.repo(), target)?;
             let oid = executor.resolve_comment(&target, &comment, message)?;
             println!("{oid}");
         }
 
         CommentCommand::List { target } => {
+            let target = default_target(executor.repo(), target)?;
             executor.list_comments(&target)?;
         }
 
         CommentCommand::View { target, comment } => {
+            let target = default_target(executor.repo(), target)?;
             executor.view_comment(&target, &comment)?;
         }
     }
