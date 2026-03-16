@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use git_forge_issue::issue::{Issue, IssueMeta, IssueState, ISSUES_REF_PREFIX};
+use criterion::{Criterion, criterion_group, criterion_main};
+use git_forge_issue::{ISSUES_REF_PREFIX, Issue, IssueMeta, IssueState};
 
 fn bench_issue_state_as_str(c: &mut Criterion) {
     c.bench_function("IssueState::as_str/open", |b| {
