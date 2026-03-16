@@ -431,6 +431,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "criterion",
+ "git-forge-comment",
  "git2",
  "tempfile",
 ]

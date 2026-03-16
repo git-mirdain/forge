@@ -1,6 +1,7 @@
 //! `git2::Repository` implementation of [`Issues`].
 
 use git2::Repository;
+use git_forge_comment::{Anchor, Comments, issue_comments_ref};
 
 use crate::{ISSUES_REF_PREFIX, Issue, IssueMeta, IssueOpts, IssueState, Issues};
 
@@ -53,8 +54,9 @@ fn read_labels(repo: &Repository, tree: &git2::Tree<'_>) -> Result<Vec<String>, 
     Ok(labels)
 }
 
-fn read_comments(_repo: &Repository, _tree: &git2::Tree<'_>) -> Vec<(String, String)> {
-    Vec::new()
+fn read_comments(repo: &Repository, id: u64) -> Result<Vec<(String, String)>, git2::Error> {
+    let comments = repo.comments_on(&issue_comments_ref(id))?;
+    Ok(comments.into_iter().map(|c| (c.oid.to_string(), c.body)).collect())
 }
 
 fn issue_from_ref(
@@ -89,7 +91,7 @@ fn issue_from_ref(
     let labels = read_labels(repo, &tree)?;
 
     let body = blob_content(repo, &tree, "body")?.unwrap_or_default();
-    let comments = read_comments(repo, &tree);
+    let comments = read_comments(repo, id)?;
 
     Ok(Some(Issue {
         id,
@@ -309,11 +311,16 @@ impl Issues for Repository {
 
     fn add_issue_comment(
         &self,
-        _id: u64,
+        id: u64,
         _author: &str,
-        _body: &str,
-        _opts: Option<&IssueOpts>,
+        body: &str,
+        opts: Option<&IssueOpts>,
     ) -> Result<(), git2::Error> {
-        todo!()
+        let prefix = opts.map_or(ISSUES_REF_PREFIX, |o| o.ref_prefix.as_str());
+        let issue_ref_name = format!("{prefix}{id}");
+        let commit_oid = self.find_reference(&issue_ref_name)?.peel_to_commit()?.id();
+        let anchor = Anchor::Commit(commit_oid);
+        self.add_comment(&issue_comments_ref(id), &anchor, body)?;
+        Ok(())
     }
 }
