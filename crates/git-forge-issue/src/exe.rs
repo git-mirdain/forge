@@ -69,19 +69,23 @@ fn parse_issue_template(content: &str) -> Result<(String, String), Box<dyn std::
 const FORGE_REFSPEC: &str = "+refs/forge/*:refs/forge/*";
 const MAX_PUSH_ATTEMPTS: usize = 3;
 
+// TODO audit: credential_callbacks uses global git config, not repo config
 fn fetch_forge_refs(repo: &git2::Repository) -> Result<(), Box<dyn std::error::Error>> {
     let mut remote = repo.find_remote("origin")?;
-    remote.fetch(&[FORGE_REFSPEC], None, None)?;
+    let mut fetch_opts = git_forge_core::credentials::fetch_options()?;
+    remote.fetch(&[FORGE_REFSPEC], Some(&mut fetch_opts), None)?;
     Ok(())
 }
 
+// TODO audit: credential_callbacks uses global git config, not repo config
 fn push_forge_ref(
     repo: &git2::Repository,
     ref_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut remote = repo.find_remote("origin")?;
     let refspec = format!("{ref_name}:{ref_name}");
-    remote.push(&[&refspec], None)?;
+    let mut push_opts = git_forge_core::credentials::push_options()?;
+    remote.push(&[&refspec], Some(&mut push_opts))?;
     Ok(())
 }
 

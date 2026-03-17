@@ -8,6 +8,7 @@ description = "Shared annotations for git-forge: comments and approvals."
 
 [dependencies]
 git2 = { workspace = true }
+git2_credentials = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
