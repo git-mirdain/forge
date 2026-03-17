@@ -63,6 +63,18 @@ fn push_forge_ref(repo: &git2::Repository, ref_name: &str) -> Result<(), Box<dyn
     Ok(())
 }
 
+fn find_ref_for_comment(repo: &git2::Repository, oid: git2::Oid) -> Result<String, Box<dyn Error>> {
+    let refs = repo.references_glob(&format!("{COMMENTS_REF_PREFIX}*"))?;
+    for reference in refs {
+        let reference = reference?;
+        let ref_name = reference.name().ok_or("non-UTF-8 ref name")?.to_string();
+        if repo.find_comment(&ref_name, oid)?.is_some() {
+            return Ok(ref_name);
+        }
+    }
+    Err(format!("comment {oid} not found in any forge ref").into())
+}
+
 fn default_target(repo: &git2::Repository, target: Option<String>) -> Result<String, Box<dyn Error>> {
     if let Some(t) = target { Ok(t) } else {
         let head = repo.head()?.peel_to_commit()?;
@@ -158,16 +170,15 @@ impl Executor {
 
     pub fn reply_to_comment(
         &self,
-        target: &str,
         comment_oid_str: &str,
         body: &str,
-    ) -> Result<git2::Oid, Box<dyn Error>> {
-        let t = parse_target(target)?;
+    ) -> Result<(git2::Oid, String), Box<dyn Error>> {
         let repo = self.repo();
         let parent_oid = git2::Oid::from_str(comment_oid_str)
             .map_err(|e| format!("invalid comment OID {comment_oid_str:?}: {e}"))?;
-        let oid = repo.reply_to_comment(&t.ref_name, parent_oid, body)?;
-        Ok(oid)
+        let ref_name = find_ref_for_comment(repo, parent_oid)?;
+        let oid = repo.reply_to_comment(&ref_name, parent_oid, body)?;
+        Ok((oid, ref_name))
     }
 
     pub fn edit_comment(
@@ -186,16 +197,15 @@ impl Executor {
 
     pub fn resolve_comment(
         &self,
-        target: &str,
         comment_oid_str: &str,
         _message: Option<String>,
-    ) -> Result<git2::Oid, Box<dyn Error>> {
-        let t = parse_target(target)?;
+    ) -> Result<(git2::Oid, String), Box<dyn Error>> {
         let repo = self.repo();
         let comment_oid = git2::Oid::from_str(comment_oid_str)
             .map_err(|e| format!("invalid comment OID {comment_oid_str:?}: {e}"))?;
-        let oid = repo.resolve_comment(&t.ref_name, comment_oid)?;
-        Ok(oid)
+        let ref_name = find_ref_for_comment(repo, comment_oid)?;
+        let oid = repo.resolve_comment(&ref_name, comment_oid)?;
+        Ok((oid, ref_name))
     }
 
     pub fn list_comments(&self, target: &str) -> Result<(), Box<dyn Error>> {
@@ -389,16 +399,14 @@ fn run_inner(command: CommentCommand, push: bool, fetch: bool) -> Result<(), Box
             let _ = std::fs::remove_file(repo.path().join("COMMENT_EDITMSG"));
         }
 
-        CommentCommand::Reply { target, comment, body } => {
-            let target = default_target(repo, target)?;
+        CommentCommand::Reply { comment, body } => {
             let body = read_body(repo, body)?;
             if fetch {
                 fetch_forge_refs(repo)?;
             }
-            let oid = executor.reply_to_comment(&target, &comment, &body)?;
+            let (oid, ref_name) = executor.reply_to_comment(&comment, &body)?;
             if push {
-                let t = parse_target(&target)?;
-                push_forge_ref(repo, &t.ref_name)?;
+                push_forge_ref(repo, &ref_name)?;
             }
             println!("{oid}");
             let _ = std::fs::remove_file(repo.path().join("COMMENT_EDITMSG"));
@@ -426,15 +434,13 @@ fn run_inner(command: CommentCommand, push: bool, fetch: bool) -> Result<(), Box
             let _ = std::fs::remove_file(repo.path().join("COMMENT_EDITMSG"));
         }
 
-        CommentCommand::Resolve { target, comment, message } => {
-            let target = default_target(repo, target)?;
+        CommentCommand::Resolve { comment, message } => {
             if fetch {
                 fetch_forge_refs(repo)?;
             }
-            let oid = executor.resolve_comment(&target, &comment, message)?;
+            let (oid, ref_name) = executor.resolve_comment(&comment, message)?;
             if push {
-                let t = parse_target(&target)?;
-                push_forge_ref(repo, &t.ref_name)?;
+                push_forge_ref(repo, &ref_name)?;
             }
             println!("{oid}");
         }

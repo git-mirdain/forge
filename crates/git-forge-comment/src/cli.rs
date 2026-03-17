@@ -29,9 +29,6 @@ pub enum CommentCommand {
 
     /// Reply to an existing comment.
     Reply {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc. Defaults to "commit/<HEAD>".
-        target: Option<String>,
-
         /// OID of the comment to reply to.
         comment: String,
 
@@ -55,9 +52,6 @@ pub enum CommentCommand {
 
     /// Resolve a comment thread.
     Resolve {
-        /// Target: "issue/<id>", "review/<id>", "commit/<sha>", etc. Defaults to "commit/<HEAD>".
-        target: Option<String>,
-
         /// OID of the comment to resolve.
         comment: String,
 
