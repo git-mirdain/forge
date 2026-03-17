@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process;
 
 mod install;
+mod sync;
 
 fn main() {
     if let Some(dir) = parse_generate_man_flag() {
@@ -28,6 +29,12 @@ fn main() {
         Commands::Comment { command } => git_forge_comment::exe::run(command, push, fetch),
         Commands::Install { remote, global } => {
             if let Err(e) = install::run(remote.as_deref(), global) {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        }
+        Commands::Sync { remote } => {
+            if let Err(e) = sync::run(remote.as_deref(), fetch, push) {
                 eprintln!("Error: {e}");
                 process::exit(1);
             }

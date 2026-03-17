@@ -65,4 +65,10 @@ pub enum Commands {
         #[arg(long)]
         global: bool,
     },
+
+    /// Sync forge refs with a remote (fetch + push). Respects --no-fetch and --no-push.
+    Sync {
+        /// Remote to sync with. Defaults to `origin`.
+        remote: Option<String>,
+    },
 }
