@@ -267,35 +267,30 @@ impl Executor {
         let comment = repo
             .find_comment(&ref_name, oid)?
             .ok_or_else(|| format!("comment {comment_oid_str} not found"))?;
+        print_comment(&comment);
+        Ok(())
+    }
 
-        println!("commit {}", comment.oid);
-        match &comment.anchor {
-            Anchor::Blob { oid, line_ranges } => {
-                if line_ranges.is_empty() {
-                    println!("anchor: blob {oid}");
-                } else {
-                    let ranges = line_ranges
-                        .iter()
-                        .map(|(s, e)| format!("{s}-{e}"))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    println!("anchor: blob {oid} lines {ranges}");
+    pub fn show_comments(&self, target: &str) -> Result<(), Box<dyn Error>> {
+        let t = parse_target(target)?;
+        let repo = self.repo();
+        let comments = repo.comments_on(&t.ref_name)?;
+        let mut first = true;
+        for comment in &comments {
+            if comment.resolved {
+                continue;
+            }
+            if let Some(ref filter) = t.anchor_filter {
+                let oid_hex = anchor_oid(&comment.anchor).to_string();
+                if !oid_hex.starts_with(filter.as_str()) {
+                    continue;
                 }
             }
-            Anchor::Commit(oid) => println!("anchor: commit {oid}"),
-            Anchor::Tree(oid) => println!("anchor: tree {oid}"),
-            Anchor::CommitRange { start, end } => println!("anchor: commits {start}..{end}"),
-        }
-        if let Some(p) = comment.parent_oid {
-            println!("parent: {p}");
-        }
-        if comment.resolved {
-            println!("resolved: true");
-        }
-        println!();
-        print!("{}", comment.body);
-        if !comment.body.ends_with('\n') {
-            println!();
+            if !first {
+                println!();
+            }
+            first = false;
+            print_comment(comment);
         }
         Ok(())
     }
@@ -304,6 +299,38 @@ impl Executor {
 /// Resolve an anchor argument to an [`Anchor`].
 ///
 /// `anchor` may be an OID or a file path (resolved against HEAD's tree).
+fn print_comment(comment: &crate::Comment) {
+    println!("commit {}", comment.oid);
+    match &comment.anchor {
+        Anchor::Blob { oid, line_ranges } => {
+            if line_ranges.is_empty() {
+                println!("anchor: blob {oid}");
+            } else {
+                let ranges = line_ranges
+                    .iter()
+                    .map(|(s, e)| format!("{s}-{e}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                println!("anchor: blob {oid} lines {ranges}");
+            }
+        }
+        Anchor::Commit(oid) => println!("anchor: commit {oid}"),
+        Anchor::Tree(oid) => println!("anchor: tree {oid}"),
+        Anchor::CommitRange { start, end } => println!("anchor: commits {start}..{end}"),
+    }
+    if let Some(p) = comment.parent_oid {
+        println!("parent: {p}");
+    }
+    if comment.resolved {
+        println!("resolved: true");
+    }
+    println!();
+    print!("{}", comment.body);
+    if !comment.body.ends_with('\n') {
+        println!();
+    }
+}
+
 /// When `anchor_type` is omitted the object's kind is used to infer the type.
 /// `range` is a comma-separated list of `start-end` pairs for blob anchors.
 ///
@@ -463,7 +490,7 @@ fn run_inner(command: CommentCommand, push: bool, fetch: bool) -> Result<(), Box
             if let Some(oid) = comment {
                 executor.show_comment(&target, &oid)?;
             } else {
-                executor.list_comments(&target)?;
+                executor.show_comments(&target)?;
             }
         }
     }
