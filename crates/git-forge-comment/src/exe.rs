@@ -101,6 +101,14 @@ pub struct Target {
 ///
 /// Returns an error if the target string is not in `<kind>/<id>` form or uses an unknown kind.
 pub fn parse_target(target: &str) -> Result<Target, Box<dyn Error>> {
+    // Allow bare OIDs (hex strings) as shorthand for commit/<sha>.
+    if target.chars().all(|c| c.is_ascii_hexdigit()) && !target.is_empty() {
+        return Ok(Target {
+            ref_name: OBJECT_COMMENTS_REF.to_string(),
+            anchor_filter: Some(target.to_string()),
+        });
+    }
+
     let Some((kind, id)) = target.split_once('/') else {
         return Err(format!(
             "invalid target {target:?}: expected \"<kind>/<id>\" \
