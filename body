@@ -1,0 +1,3 @@
+`comment show -c <short-oid>` returns "comment not found". Only the full 40-character OID works. Short OID prefixes should be resolved the same way git resolves them.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
