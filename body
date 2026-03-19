@@ -1,0 +1,3 @@
+`issue new ""` creates an issue with no title. Should reject empty/whitespace-only titles.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
