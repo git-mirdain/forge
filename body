@@ -1,0 +1,3 @@
+`comment new commit/<non-HEAD-sha>` sets the Anchor to HEAD instead of the specified commit. The explicit target commit is ignored.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
