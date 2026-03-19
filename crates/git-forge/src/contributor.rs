@@ -72,6 +72,20 @@ fn run_inner(
             eprintln!("Added contributor {id} ({name} <{}>).", emails.join(", "));
         }
 
+        ContributorSubcommand::Edit { id, name, add_emails, remove_emails } => {
+            if name.is_none() && add_emails.is_empty() && remove_emails.is_empty() {
+                return Err("nothing to update; pass --name, --add-email, or --remove-email".into());
+            }
+            if fetch {
+                fetch_forge_refs(&repo)?;
+            }
+            repo.update_contributor(&id, name.as_deref(), &add_emails, &remove_emails)?;
+            if push {
+                push_forge_ref(&repo, git_forge_core::contributor::CONTRIBUTORS_REF)?;
+            }
+            eprintln!("Updated contributor {id}.");
+        }
+
         ContributorSubcommand::List => {
             let contributors = repo.list_contributors()?;
             if contributors.is_empty() {
@@ -81,6 +95,17 @@ fn run_inner(
                     println!("{}\t{} <{}>", c.id, c.name, c.emails.join(", "));
                 }
             }
+        }
+
+        ContributorSubcommand::Remove { id } => {
+            if fetch {
+                fetch_forge_refs(&repo)?;
+            }
+            repo.remove_contributor(&id)?;
+            if push {
+                push_forge_ref(&repo, git_forge_core::contributor::CONTRIBUTORS_REF)?;
+            }
+            eprintln!("Removed contributor {id}.");
         }
 
         ContributorSubcommand::Show { id } => {

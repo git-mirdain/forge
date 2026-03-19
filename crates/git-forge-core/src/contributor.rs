@@ -61,4 +61,27 @@ pub trait Contributors {
     ///
     /// Returns `git2::Error` if the contributor already exists or writing fails.
     fn add_contributor(&self, id: &str, name: &str, emails: &[String]) -> Result<(), ::git2::Error>;
+
+    /// Update an existing contributor.
+    ///
+    /// `name` replaces the display name if `Some`. `add_emails` and
+    /// `remove_emails` are applied to the existing email list.
+    ///
+    /// # Errors
+    ///
+    /// Returns `git2::Error` if the contributor does not exist or writing fails.
+    fn update_contributor(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        add_emails: &[String],
+        remove_emails: &[String],
+    ) -> Result<(), ::git2::Error>;
+
+    /// Remove a contributor from the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns `git2::Error` if the contributor does not exist or writing fails.
+    fn remove_contributor(&self, id: &str) -> Result<(), ::git2::Error>;
 }

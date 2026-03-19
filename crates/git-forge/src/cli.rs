@@ -46,8 +46,30 @@ pub enum ContributorSubcommand {
         #[arg(long = "email")]
         emails: Vec<String>,
     },
+    /// Edit an existing contributor.
+    Edit {
+        /// Contributor ID to edit.
+        id: String,
+
+        /// New display name.
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Email address to add. May be repeated.
+        #[arg(long = "add-email")]
+        add_emails: Vec<String>,
+
+        /// Email address to remove. May be repeated.
+        #[arg(long = "remove-email")]
+        remove_emails: Vec<String>,
+    },
     /// List all contributors.
     List,
+    /// Remove a contributor from the registry.
+    Remove {
+        /// Contributor ID to remove.
+        id: String,
+    },
     /// Show details for a contributor.
     Show {
         /// Contributor ID to look up.

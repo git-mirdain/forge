@@ -132,4 +132,108 @@ impl Contributors for Repository {
 
         Ok(())
     }
+
+    fn update_contributor(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        add_emails: &[String],
+        remove_emails: &[String],
+    ) -> Result<(), git2::Error> {
+        let reference = match self.find_reference(CONTRIBUTORS_REF) {
+            Ok(r) => r,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => {
+                return Err(git2::Error::from_str(&format!(
+                    "contributor '{id}' not found"
+                )));
+            }
+            Err(e) => return Err(e),
+        };
+        let existing_commit = reference.peel_to_commit()?;
+        let existing_tree = existing_commit.tree()?;
+
+        let mut contributor = contributor_from_tree(self, &existing_tree, id)?.ok_or_else(
+            || git2::Error::from_str(&format!("contributor '{id}' not found")),
+        )?;
+
+        if let Some(n) = name {
+            contributor.name = n.to_string();
+        }
+        for e in add_emails {
+            if !contributor.emails.contains(e) {
+                contributor.emails.push(e.clone());
+            }
+        }
+        contributor.emails.retain(|e| !remove_emails.contains(e));
+
+        let name_blob = self.blob(contributor.name.as_bytes())?;
+        let emails_blob = self.blob(contributor.emails.join("\n").as_bytes())?;
+
+        let contributor_tree_oid = {
+            let mut tb = self.treebuilder(None)?;
+            tb.insert("name", name_blob, 0o100_644)?;
+            tb.insert("emails", emails_blob, 0o100_644)?;
+            tb.write()?
+        };
+
+        let root_tree_oid = {
+            let mut tb = self.treebuilder(Some(&existing_tree))?;
+            tb.insert(id, contributor_tree_oid, 0o040_000)?;
+            tb.write()?
+        };
+
+        let tree = self.find_tree(root_tree_oid)?;
+        let sig = self.signature()?;
+        let message = format!("update contributor {id}");
+        self.commit(
+            Some(CONTRIBUTORS_REF),
+            &sig,
+            &sig,
+            &message,
+            &tree,
+            &[&existing_commit],
+        )?;
+
+        Ok(())
+    }
+
+    fn remove_contributor(&self, id: &str) -> Result<(), git2::Error> {
+        let reference = match self.find_reference(CONTRIBUTORS_REF) {
+            Ok(r) => r,
+            Err(e) if e.code() == git2::ErrorCode::NotFound => {
+                return Err(git2::Error::from_str(&format!(
+                    "contributor '{id}' not found"
+                )));
+            }
+            Err(e) => return Err(e),
+        };
+        let existing_commit = reference.peel_to_commit()?;
+        let existing_tree = existing_commit.tree()?;
+
+        if existing_tree.get_name(id).is_none() {
+            return Err(git2::Error::from_str(&format!(
+                "contributor '{id}' not found"
+            )));
+        }
+
+        let root_tree_oid = {
+            let mut tb = self.treebuilder(Some(&existing_tree))?;
+            tb.remove(id)?;
+            tb.write()?
+        };
+
+        let tree = self.find_tree(root_tree_oid)?;
+        let sig = self.signature()?;
+        let message = format!("remove contributor {id}");
+        self.commit(
+            Some(CONTRIBUTORS_REF),
+            &sig,
+            &sig,
+            &message,
+            &tree,
+            &[&existing_commit],
+        )?;
+
+        Ok(())
+    }
 }
