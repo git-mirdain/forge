@@ -1,0 +1,3 @@
+`review list` and `release list` hit `todo!()` and panic with a stack trace. Unimplemented subcommands should return a user-friendly error message instead of panicking.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
