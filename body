@@ -1,0 +1,5 @@
+`fetch_forge_refs` uses the refspec `+refs/forge/*:refs/forge/*`. The leading `+` forces the fetch, unconditionally overwriting all local forge refs with the remote state. Any issues or comments created with `--no-push` are silently destroyed the next time a command runs without `--no-push`.
+
+The refspec should not use `+` (or should be replaced with a merge/fast-forward-only strategy) so that local-only refs are not clobbered by a fetch.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
