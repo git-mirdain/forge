@@ -1,6 +1,6 @@
 //! Implementation of `git forge sync`.
 
-const FORGE_FETCH_REFSPEC: &str = "+refs/forge/*:refs/forge/*";
+const FORGE_FETCH_REFSPEC: &str = "refs/forge/*:refs/forge/*";
 
 pub fn run(
     remote: Option<&str>,
