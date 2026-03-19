@@ -1,0 +1,11 @@
+The design doc specifies that sync conflicts should be resolved via three-way tree merge, not force-fetch overwrite.
+
+After removing the `+` from the fetch refspec (issue #4), fetched refs that diverge from local state are left unmerged. The daemon (or `git forge sync`) should:
+
+1. Attempt a three-way tree merge on entity refs (issues, reviews). Because entity fields are separate blobs, edits to different fields by different authors merge cleanly.
+2. Fall back to last-write-wins (keep remote, discard local, notify user with discarded content) when the merge fails (e.g. both sides changed the title).
+3. Auto-merge metadata refs (comments, approvals, links) via three-way tree merge — these rarely conflict due to unique entry paths.
+
+Reference: design doc §Conflict Resolution and §Metadata Push and Auto-Merge.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
