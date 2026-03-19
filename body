@@ -1,0 +1,3 @@
+After `comment resolve`, the resolved thread still appears in `comment show -t issue/N`. The help says the default is "all active comments", implying resolved threads should be filtered out.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
