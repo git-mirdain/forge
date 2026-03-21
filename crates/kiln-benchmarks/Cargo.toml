@@ -1,0 +1,21 @@
+[package]
+name = "kiln-benchmarks"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+license.workspace = true
+description = "Benchmarks for measuring Git object store performance under Kiln's build cache access patterns."
+
+[[bench]]
+name = "kiln"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+git2 = "0.19"
+tempfile = "3"
+rand = "0.8"
+sha2 = "0.10"
+
+[lints]
+workspace = true

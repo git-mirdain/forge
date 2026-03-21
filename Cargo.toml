@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/git-kiln"]
+members = ["crates/git-kiln", "crates/kiln-benchmarks", "experiments/git2-odb-bench"]
 
 [workspace.package]
 edition = "2024"

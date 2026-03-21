@@ -1,0 +1,15 @@
+[package]
+name = "git2-odb-bench"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+license.workspace = true
+description = "Integration benchmarks proving Git as a build CAS."
+
+[dependencies]
+git2 = "0.19"
+tempfile = "3"
+rand = "0.8"
+
+[lints]
+workspace = true

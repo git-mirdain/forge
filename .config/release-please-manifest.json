@@ -1,3 +1,4 @@
 {
-  "crates/git-kiln": "0.0.0"
+  "crates/git-kiln": "0.0.0",
+  "crates/kiln-benchmarks": "0.0.0"
 }
