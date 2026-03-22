@@ -1,6 +1,0 @@
-[vendor "git-forge"]
-	url = https://github.com/git-ents/git-forge.git
-	base = f7459a77c50c6c9c2902822e193848c12ee6ba2b
-	pattern = .config/
-	pattern = .github/
-	pattern = .zed/
