@@ -253,18 +253,15 @@ An action's output has two parts: artifact outputs (signed, shared) and state ou
 
 State restoration is the mechanism that makes LSPs fast after a kiln build. The restored files must be exactly what the language's tooling expects.
 
-For Rust, `rust-analyzer` runs `cargo check` internally, which invokes `rustc --emit=metadata` on every crate. Without restored state, this recompiles every dependency from scratch — minutes on a large workspace. With restored state, `cargo check` skips all cached deps and only checks the crate the developer is editing.
+For Rust, `rust-analyzer` invokes `rustc --emit=metadata` on every crate for type checking. Without restored state, this recompiles every dependency from scratch — minutes on a large workspace. With restored state, it skips all cached deps and only checks the crate the developer is editing.
 
 The minimal state set for Rust is:
 
-- `target/<profile>/deps/*.rmeta` — type metadata for all crates (this is what `cargo check` produces and what rust-analyzer consumes)
-- `target/<profile>/deps/*.rlib` — compiled crate archives (needed if the developer later runs `cargo build` outside kiln)
+- `target/<profile>/deps/*.rmeta` — type metadata for all crates (what rust-analyzer consumes)
+- `target/<profile>/deps/*.rlib` — compiled crate archives
 - `target/<profile>/build/*/out/` — build script outputs (generated code, cfg flags)
-- `target/<profile>/.fingerprint/` — cargo's staleness records (so cargo agrees on what's current)
 
 Rust-analyzer expects a debug profile build. `cargo-kiln` should always emit a debug build action so that LSP integration works out of the box. If the developer only requested a release build, the debug `.rmeta` files are still needed for the editor experience.
-
-The `.d` files (dependency tracking) and top-level binaries/rlibs are not needed for state restoration. Cargo regenerates `.d` files from fingerprints, and top-level binaries are just the final link step — seconds to reproduce from cached `.rlib` files.
 
 
 ## Isolation Levels
@@ -337,7 +334,7 @@ Downstream build nodes depend on specific vendor crates by name:
 [[action]]
 name = "mylib"
 isolation = 3
-inputs = ["crates/mylib/"]
+inputs = ["crates/mylib/src/"]
 
 [deps.vendor-serde]
 src = "vendor/serde/"
@@ -345,13 +342,19 @@ src = "vendor/serde/"
 [deps.vendor-tokio]
 src = "vendor/tokio/"
 
-run = ["cargo", "build", "-p", "mylib", "--frozen"]
+run = [
+  "rustc", "--edition=2021", "--crate-type=lib", "--crate-name=mylib",
+  "crates/mylib/src/lib.rs",
+  "--extern", "serde=vendor/serde/libserde.rlib",
+  "--extern", "tokio=vendor/tokio/libtokio.rlib",
+  "--out-dir", "out/",
+]
 
 [outputs]
-lib = "target/release/libmylib.rlib"
+lib = "out/libmylib.rlib"
 ```
 
-The `--frozen` flag tells Cargo not to touch the network or update the lock file. All crates are already local in the vendored trees. At isolation level three, the network is blocked anyway — but the flag makes the intent explicit even at lower levels.
+The `rustc` invocations come from cargo's build plan — cargo is used for planning, not execution. At isolation level three, the network is blocked; all inputs are declared in the plan.
 
 The same pattern applies to every language with a lock file: `uv-kiln` emits per-package fetch nodes reading `uv.lock`, `go-kiln` emits per-module fetch nodes reading `go.sum`.
 
@@ -395,36 +398,6 @@ The planning action is cacheable like any other. Same worktree and same planner 
 For dirty worktrees, kiln rejects by default. A `--allow-dirty` flag hashes the actual working tree instead of HEAD's tree. The cache key includes uncommitted changes, so results are correct but only locally useful — they cannot be signed or shared because they don't correspond to a commit.
 
 
-## Mtime Normalization Contract
-
-Cargo's fingerprinting is mtime-based. It records the modification time and absolute path of every source file and artifact. When fingerprints are restored from a remote cache onto a different machine, mtimes and paths will not match unless the executor enforces determinism. This is the single hardest integration problem for `cargo-kiln`.
-
-Kiln's executor must normalize mtimes and paths before invoking cargo. This is a contract, not an optimization — without it, cargo recompiles everything on every cache restore, defeating the purpose of the system.
-
-**Path determinism.** The executor must ensure that cargo always runs from a canonical working directory. At isolation level two and above, this is trivial — the sandbox mounts the worktree at a fixed path (e.g., `/kiln/workspace/`). Fingerprints are recorded against that path on every machine. At levels zero and one, the executor creates a symlink from a fixed canonical path to the actual checkout and invokes cargo from there:
-
-```sh
-ln -sfn /actual/checkout /kiln/workspace
-cd /kiln/workspace
-cargo build -p foo
-```
-
-This only works if kiln is the sole entry point for builds. If the developer runs `cargo build` directly from their checkout path, cargo records fingerprints against the real path, clobbering the kiln-compatible ones. Kiln should detect non-canonical fingerprint paths and warn.
-
-**Mtime determinism.** Before every cargo invocation, kiln sets all source file mtimes and all restored artifact mtimes to a deterministic value — the git commit timestamp of HEAD. The value itself does not matter as long as it is reproducible. Both CI and the local machine perform the same normalization:
-
-```sh
-git ls-files | xargs touch -t <commit_timestamp>
-```
-
-For restored artifacts, kiln sets mtimes during the restore step, before cargo ever sees them. Fingerprints were recorded on CI against the same normalized mtimes. The check passes.
-
-**Full cache hit path.** When every action in the DAG is a cache hit, kiln never invokes cargo at all. Kiln checks action hashes, all hit, restores outputs. There are no fingerprints to consult. The mtime normalization contract only matters for partial rebuilds — when some crates are cache hits and one is modified, and kiln needs cargo to rebuild just the modified crate without recompiling its cached dependencies.
-
-**Limitation: fingerprint internal format.** Cargo serializes its own structs into `.fingerprint/` with embedded mtime data and path hashes. The format is not stable across cargo versions. Kiln does not patch fingerprint internals — it ensures the conditions under which fingerprints were created are reproduced exactly. If cargo changes its fingerprint format, the existing cache entries become misses, which is correct behavior — a toolchain change invalidates the cache.
-
-**Future direction: direct rustc invocation.** If cargo's fingerprinting proves too fragile, `cargo-kiln` can bypass cargo for execution entirely. The planner already calls `cargo metadata` for the dependency graph and can capture exact `rustc` invocations from `cargo build -v`. Each action's `run` field becomes a direct `rustc` call with `--extern` flags pointing at dependency `.rlib` inputs. This is what Buck2 and Bazel's `rules_rust` do. It eliminates the fingerprint problem but requires maintaining compatibility with rustc's unstable CLI surface. This is deferred unless mtime normalization proves insufficient.
-
 
 ## Action Failure
 
@@ -453,18 +426,6 @@ For most use cases, stage one is where the cost-benefit ratio peaks. Content-add
 The simplest useful form of kiln is a cache. Existing lock files are already content-addressed dependency specifications. `Cargo.lock`, `uv.lock`, `go.sum`, and `package-lock.json` contain content hashes of every dependency. Hash the lock file plus the source tree plus the toolchain, and you have a cache key. Hit means return the stored output. Miss means build and store the result.
 
 The Git remote is the cache. CI runs `kiln build`, populates the cache, pushes build refs. A developer clones and runs `kiln build`. Every external crate, every pinned dependency, every unchanged module is an instant cache hit fetched from the remote. No sccache, no S3 bucket, no cache key heuristics.
-
-### Cargo-Specific Cache Boundaries
-
-For Rust projects, the minimal set of artifacts needed to make `cargo build` a no-op for a cached crate is:
-
-- `target/<profile>/deps/` — compiled `.rlib`, `.rmeta`, `.so` files for every crate, including transitive dependencies
-- `target/<profile>/.fingerprint/` — cargo's staleness records
-- `target/<profile>/build/` — build script outputs
-
-Everything else is regenerable. Top-level binaries and rlibs (`target/debug/my-binary`, `target/debug/libmy_crate.rlib`) are just the final link step from `.rlib` files in `deps/` — seconds to reproduce. `.d` files (dependency tracking) are regenerated from fingerprints. The `incremental/` directory is the incremental compilation cache — large, fragile, and inherently non-hermetic. The `examples/` directory is built on demand. `.cargo-lock`, `.rustc_info.json`, and `CACHEDIR.TAG` at the target root are metadata files cargo recreates.
-
-`cargo-kiln` stores `deps/` + `.fingerprint/` + `build/` per action. It does not store `incremental/` — incremental compilation is a local convenience that conflicts with hermetic caching. The `state` output restores these three directories after a build so that subsequent cargo invocations (including rust-analyzer's `cargo check`) see a warm cache.
 
 ### Cache Key Refinement
 
@@ -580,7 +541,7 @@ The adapter contract requires the adapter to answer two questions: what are my i
 <language> kiln plan → emits action nodes with inputs and dependencies
 ```
 
-The adapter calls into the language's own tooling for introspection. `cargo-kiln` calls `cargo metadata`. `uv-kiln` reads `uv.lock`. `go-kiln` calls `go list -deps`. The adapter is a translation layer that serializes the language tool's own understanding of the project into kiln's plan format.
+The adapter calls into the language's own tooling for introspection. `cargo-kiln` uses `cargo metadata` and cargo's build plan output (`cargo build --build-plan`) to derive the dependency graph and exact `rustc` invocations; kiln then runs those `rustc` commands directly rather than invoking cargo for execution. `uv-kiln` reads `uv.lock`. `go-kiln` calls `go list -deps`. The adapter is a translation layer that serializes the language tool's own understanding of the project into kiln's plan format.
 
 This means cache key correctness is the language tool's responsibility. It knows about feature flags, build profiles, platform-specific dependencies, and conditional compilation. Kiln never guesses at language-specific semantics. The adapter hashes the inputs it knows matter. This resolves the fundamental tension in build caching: the less a build system knows about a language's internals, the coarser the caching. The more it knows, the more it becomes language-specific. By delegating to adapters, kiln gets fine-grained caching without centralizing language knowledge.
 
@@ -608,7 +569,7 @@ Build actions depend on specific vendor crate nodes:
 [[action]]
 name = "mylib"
 isolation = 3
-inputs = ["crates/mylib/"]
+inputs = ["crates/mylib/src/"]
 
 [deps.vendor-serde]
 src = "vendor/serde/"
@@ -616,13 +577,19 @@ src = "vendor/serde/"
 [deps.vendor-tokio]
 src = "vendor/tokio/"
 
-run = ["cargo", "build", "-p", "mylib", "--frozen"]
+run = [
+  "rustc", "--edition=2021", "--crate-type=lib", "--crate-name=mylib",
+  "crates/mylib/src/lib.rs",
+  "--extern", "serde=vendor/serde/libserde.rlib",
+  "--extern", "tokio=vendor/tokio/libtokio.rlib",
+  "--out-dir", "out/",
+]
 
 [outputs]
-lib = "target/release/libmylib.rlib"
+lib = "out/libmylib.rlib"
 ```
 
-The `--frozen` flag tells Cargo not to touch the network or update the lock file. All crates are already local in the vendored trees. At isolation level three, the network is blocked anyway — but the flag makes the intent explicit even at lower levels.
+The `rustc` invocations are derived from cargo's build plan (`cargo build --build-plan`) rather than invoking cargo for execution. At isolation level three, the network is blocked anyway — inputs are fully declared in the plan.
 
 The adapter doesn't fetch anything. It declares nodes. Kiln executes the vendor actions (or retrieves cache hits), verifies each output against expected hashes, and stages the vendored crates as inputs to downstream build actions. The same pattern applies to every language with a lock file: `uv-kiln` emits per-package fetch nodes reading `uv.lock`, `go-kiln` emits per-module fetch nodes reading `go.sum`.
 
@@ -654,9 +621,9 @@ Kiln enforces the higher of the two. Same rule as action nodes: kiln can enforce
 
 ### Granularity Tiers
 
-Language adapters can emit nodes at different granularities. At the workspace level, the entire project is one node. The planner is trivial and caching is coarse. At the crate or module level, one node per logical package uses moderate planning effort and achieves good caching. At the compilation unit level, one node per compiler invocation achieves maximum caching but effectively replaces the language's own build orchestration.
+Language adapters can emit nodes at different granularities. At the workspace level, the entire project is one node. The planner is trivial and caching is coarse. At the crate or module level, one node per logical package uses moderate planning effort and achieves good caching. At the compilation unit level, one node per compiler invocation achieves maximum caching and is the target granularity for Rust via cargo's build plan output.
 
-For most languages, the module level is the practical sweet spot. The language tool already thinks in these units. The planner uses standard introspection APIs. And the language's native build system still runs inside the sandbox, handling the fine-grained details.
+For Rust, the compilation unit level is the primary target: `cargo-kiln` uses cargo's build plan to extract per-crate `rustc` invocations, which become the action `run` fields. Kiln orchestrates rustc directly — cargo is used for planning, not execution. For languages without a build plan equivalent (Python, Go), the module level is the practical sweet spot and the language runtime handles fine-grained details inside the sandbox.
 
 ### Codegen and Planner Limitations
 
