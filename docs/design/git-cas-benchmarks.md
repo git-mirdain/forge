@@ -4,11 +4,13 @@
 
 Answer one question with numbers: can Git's object store serve as the content-addressed cache for a build system at realistic scale?
 
-Every benchmark compares against the baseline: tar+zstd to local disk (proxy for S3/sccache). Git doesn't need to be faster. It needs to be close enough that the deduplication, provenance, and transport advantages justify the overhead.
+Every benchmark compares against the baseline: tar+zstd to local disk (proxy for S3/sccache).
+Git doesn't need to be faster.
+It needs to be close enough that the deduplication, provenance, and transport advantages justify the overhead.
 
 ## Crate Structure
 
-```
+```text
 git-kiln-bench/
 ├── Cargo.toml
 ├── src/
@@ -27,7 +29,8 @@ Dependencies: `git2` (libgit2 bindings), `criterion` for microbenchmarks, `tempf
 
 ## Artifact Generation (gen.rs)
 
-Generate fake but realistic build outputs. The byte distribution matters — random data won't compress like real artifacts, but zeros won't either.
+Generate fake but realistic build outputs.
+The byte distribution matters — random data won't compress like real artifacts, but zeros won't either.
 
 Approach: read a few real `.rlib` and `.so` files, compute byte frequency distributions, generate synthetic artifacts matching those distributions at configurable sizes.
 
@@ -73,6 +76,7 @@ fn bench_ingest(compression_level: i32, artifacts: &[Artifact]) -> IngestResult 
 ```
 
 Parameter matrix:
+
 - Compression level: 0, 1, 6 (default)
 - Artifact set: small (30 crates), medium (100 crates), large (300 crates)
 - With/without `-delta` gitattributes on binaries
@@ -84,7 +88,8 @@ Key metrics: MB/s write throughput, wall-clock time, repo size.
 **Question:** How expensive is building nested trees for a large output?
 
 Build actions produce output trees with structure:
-```
+
+```text
 deps/
   libfoo.rlib
   libfoo.rmeta
@@ -99,7 +104,8 @@ build/
       generated.rs
 ```
 
-Measure tree construction separately from blob writes. This isolates the cost of `git_treebuilder` operations and nested tree assembly.
+Measure tree construction separately from blob writes.
+This isolates the cost of `git_treebuilder` operations and nested tree assembly.
 
 ## Benchmark 3: Cache Index Operations
 
@@ -107,7 +113,7 @@ Measure tree construction separately from blob writes. This isolates the cost of
 
 The cache index is a tree under `refs/kiln/cache` with two-level fanout:
 
-```
+```text
 ab/
   cd1234.../
     commit-oid    # blob containing the OID
@@ -116,23 +122,28 @@ ab/
 ```
 
 Benchmark:
+
 - Write 10K, 50K, 200K entries (simulating months of CI)
 - Random lookup latency (p50, p95, p99)
 - Sequential scan time
 - Index update: add one entry to an existing 50K-entry index (requires tree rewrite)
 
-The update cost is the concern. Adding one entry means rewriting the fanout subtree and the root tree. Compare to: SQLite lookup, flat file scan.
+The update cost is the concern.
+Adding one entry means rewriting the fanout subtree and the root tree.
+Compare to: SQLite lookup, flat file scan.
 
 ## Benchmark 4: Fetch Simulation
 
 **Question:** How fast can a client restore a full build's outputs from a remote?
 
 Setup:
+
 - Local bare repo as "remote" (same machine, eliminates network variable)
 - Client repo with partial clone (`--filter=blob:none`)
 - Remote has 50 build commits with realistic output trees
 
 Measure:
+
 - Fetch one output tree by commit OID (all blobs materialized)
 - Fetch 30 output trees (full build restore, 30-package project)
 - Incremental fetch: remote has new build, 28/30 packages unchanged
@@ -178,6 +189,7 @@ fn soak(config: SoakConfig) -> SoakResult {
 ```
 
 Realistic parameters:
+
 - 20 builds/day (CI on push for active team)
 - 30 days simulated
 - 30 packages per build, ~280MB artifacts
@@ -200,7 +212,8 @@ For each operation, measure the equivalent non-Git path:
 | Full restore from remote | Download tarball |
 | Incremental restore | rsync |
 
-Same artifact sets, same machine. Produce a comparison table.
+Same artifact sets, same machine.
+Produce a comparison table.
 
 ## Development Sequence
 
@@ -211,7 +224,8 @@ Same artifact sets, same machine. Produce a comparison table.
 3. Benchmark 1: ingestion at compression levels 0/1/6
 4. Benchmark 6 (partial): baseline raw write and zstd write
 
-Deliverable: first numbers on MB/s ingestion. This is the most likely failure point — if ingestion is catastrophically slow, stop here.
+Deliverable: first numbers on MB/s ingestion.
+This is the most likely failure point — if ingestion is catastrophically slow, stop here.
 
 ### Week 2: Trees + Cache Index
 
@@ -219,7 +233,8 @@ Deliverable: first numbers on MB/s ingestion. This is the most likely failure po
 6. Benchmark 3: cache index CRUD at 10K/50K/200K entries
 7. Investigate whether tree-based index is viable or if a sidecar (SQLite, flat file) is needed for the index specifically
 
-Deliverable: cache lookup latency numbers. If index update is too expensive at 50K entries, the index design needs revision before proceeding.
+Deliverable: cache lookup latency numbers.
+If index update is too expensive at 50K entries, the index design needs revision before proceeding.
 
 ### Week 3: Fetch + Restore
 
@@ -227,7 +242,8 @@ Deliverable: cache lookup latency numbers. If index update is too expensive at 5
 9. Benchmark 4 (extended): localhost TCP fetch
 10. Benchmark 6 (continued): tarball download comparison
 
-Deliverable: restore latency numbers. This is the second most likely failure point — if fetching a build's outputs takes 30s vs 2s for a tarball, the developer experience suffers.
+Deliverable: restore latency numbers.
+This is the second most likely failure point — if fetching a build's outputs takes 30s vs 2s for a tarball, the developer experience suffers.
 
 ### Week 4: Soak + Report
 
@@ -235,7 +251,8 @@ Deliverable: restore latency numbers. This is the second most likely failure poi
 12. Full baseline comparison table
 13. Write-up with charts: throughput, latency, size over time, GC cost
 
-Deliverable: a single document with every number, every comparison, every chart. This is what you publish.
+Deliverable: a single document with every number, every comparison, every chart.
+This is what you publish.
 
 ## Success Criteria
 
@@ -256,4 +273,5 @@ If any of these fail, the benchmark will have identified exactly where, which te
 - libgit2 vs git CLI performance (benchmark both if ingestion is borderline)
 - Packfile negotiation efficiency for partial clone (protocol-level concern, hard to benchmark in isolation)
 
-These are follow-ups. The core question — is Git fast enough as a local and local-remote CAS — comes first.
+These are follow-ups.
+The core question — is Git fast enough as a local and local-remote CAS — comes first.
