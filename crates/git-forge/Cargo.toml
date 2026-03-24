@@ -16,6 +16,7 @@ clap_mangen = { workspace = true }
 git2 = { workspace = true }
 git-forge-comment = { workspace = true }
 git-forge-core = { workspace = true }
+hearth = { path = "../hearth" }
 git-forge-issue = { workspace = true }
 git-forge-review = { workspace = true }
 git-forge-release = { workspace = true }
