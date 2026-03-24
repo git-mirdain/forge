@@ -14,12 +14,7 @@ git2 = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
 tempfile = { workspace = true }
-
-[[bench]]
-name = "issues"
-harness = false
 
 [lints]
 workspace = true

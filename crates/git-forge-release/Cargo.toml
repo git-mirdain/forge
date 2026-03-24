@@ -9,12 +9,5 @@ description = "Release management domain for git-forge."
 [dependencies]
 clap = { workspace = true }
 
-[dev-dependencies]
-criterion = { workspace = true }
-
-[[bench]]
-name = "release"
-harness = false
-
 [lints]
 workspace = true

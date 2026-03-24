@@ -10,12 +10,5 @@ description = "Review (pull/merge request) domain for git-forge."
 clap = { workspace = true }
 git2 = { workspace = true }
 
-[dev-dependencies]
-criterion = { workspace = true }
-
-[[bench]]
-name = "review"
-harness = false
-
 [lints]
 workspace = true
