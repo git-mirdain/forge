@@ -7,6 +7,7 @@ members = [
     "crates/git-forge-review",
     "crates/git-forge-release",
     "crates/git-forge-comment",
+    "crates/hearth",
 ]
 
 [workspace.package]
@@ -34,4 +35,8 @@ git-forge-issue = { path = "crates/git-forge-issue" }
 git-forge-review = { path = "crates/git-forge-review" }
 git-forge-comment = { path = "crates/git-forge-comment" }
 git-forge-release = { path = "crates/git-forge-release" }
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }
+tar = "0.4"
 tempfile = "3"
+toml = "0.8"
