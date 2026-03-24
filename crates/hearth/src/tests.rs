@@ -592,6 +592,7 @@ toolchains = ["rust"]
             crate::env::ToolchainDef {
                 source: "git://kiln-packages/rust@1.82.0".into(),
                 oid: Some(tc_tree.to_string()),
+                strip_prefix: 0,
             },
         )]
         .into_iter()
@@ -623,6 +624,7 @@ toolchains = ["rust"]
             crate::env::ToolchainDef {
                 source: "git://kiln-packages/rust@1.82.0".into(),
                 oid: None,
+                strip_prefix: 0,
             },
         )]
         .into_iter()
@@ -655,6 +657,7 @@ toolchains = ["go"]
                 oid: Some(
                     "a3f1c9d2b8e64f5a1c0d9e2f3b4a5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b".into(),
                 ),
+                strip_prefix: 0,
             },
         )]
         .into_iter()
@@ -720,6 +723,7 @@ toolchains = ["python"]
                 crate::env::ToolchainDef {
                     source: "git://kiln-packages/rust@1.82.0".into(),
                     oid: Some(rust_tree.to_string()),
+                    strip_prefix: 0,
                 },
             ),
             (
@@ -727,6 +731,7 @@ toolchains = ["python"]
                 crate::env::ToolchainDef {
                     source: "git://kiln-packages/cpython@3.12.0".into(),
                     oid: Some(python_tree.to_string()),
+                    strip_prefix: 0,
                 },
             ),
         ]
@@ -775,6 +780,7 @@ trees = ["{raw_tree}"]
             crate::env::ToolchainDef {
                 source: "git://kiln-packages/rust@1.82.0".into(),
                 oid: Some(tc_tree.to_string()),
+                strip_prefix: 0,
             },
         )]
         .into_iter()

@@ -6,7 +6,10 @@ use clap::Parser;
 use hearth::{
     Error,
     cli::{Cli, Command, ImportCommand},
-    env::{ToolchainsConfig, load_config, load_toolchains, resolve_env, resolve_extras},
+    env::{
+        ToolchainDef, ToolchainsConfig, load_config, load_toolchains, resolve_env, resolve_extras,
+        save_toolchains,
+    },
     exe::{self, Isolation},
     import::{import_dir, import_oci, import_tarball},
     store::Store,
@@ -153,6 +156,55 @@ fn run() -> Result<(), Error> {
 
         Command::Status => {
             print_status(&store)?;
+        }
+
+        Command::Track {
+            name,
+            source,
+            strip_prefix,
+            toolchains,
+        } => {
+            let tc_path = PathBuf::from(&toolchains);
+            let mut tc = if tc_path.exists() {
+                load_toolchains(&tc_path)?
+            } else {
+                ToolchainsConfig::default()
+            };
+
+            // If source looks like a tree OID, just record it directly.
+            let oid = if git2::Oid::from_str(&source).is_ok() {
+                source.clone()
+            } else {
+                // Treat as a path — import as tarball or directory.
+                let path = PathBuf::from(&source);
+                if path.is_dir() {
+                    import_dir(&store, &path)?.to_string()
+                } else {
+                    import_tarball(&store, &path, strip_prefix)?.to_string()
+                }
+            };
+
+            tc.toolchains.insert(
+                name.clone(),
+                ToolchainDef {
+                    source,
+                    oid: Some(oid.clone()),
+                    strip_prefix,
+                },
+            );
+            save_toolchains(&tc_path, &tc)?;
+            println!("{name} = {oid}");
+        }
+
+        Command::Untrack { name, toolchains } => {
+            let tc_path = PathBuf::from(&toolchains);
+            let mut tc = load_toolchains(&tc_path)?;
+            if tc.toolchains.remove(&name).is_none() {
+                return Err(Error::Config(format!(
+                    "toolchain '{name}' not found in {toolchains}"
+                )));
+            }
+            save_toolchains(&tc_path, &tc)?;
         }
     }
 

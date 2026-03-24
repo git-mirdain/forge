@@ -38,7 +38,7 @@ use std::fs;
 use std::path::Path;
 
 use git2::{Oid, Repository};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::store::Store;
@@ -97,20 +97,27 @@ pub struct VmDef {
 }
 
 /// A single toolchain definition from `toolchains.toml`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ToolchainDef {
     /// Source URI (e.g. `git://kiln-packages/rust@1.82.0`).
     pub source: String,
     /// Resolved content-addressed tree hash (managed by hearth).
     pub oid: Option<String>,
+    /// Number of leading path components stripped on import.
+    #[serde(default, rename = "strip-prefix", skip_serializing_if = "is_zero")]
+    pub strip_prefix: usize,
 }
 
 /// Top-level configuration loaded from `.forge/toolchains.toml`.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ToolchainsConfig {
     /// Named toolchain definitions.
     #[serde(flatten)]
     pub toolchains: HashMap<String, ToolchainDef>,
+}
+
+fn is_zero(v: &usize) -> bool {
+    *v == 0
 }
 
 /// Load an `env.toml` configuration from disk.
@@ -127,6 +134,14 @@ pub fn load_toolchains(path: &Path) -> Result<ToolchainsConfig, Error> {
         .map_err(|e| Error::Config(format!("failed to read {}: {e}", path.display())))?;
     toml::from_str(&content)
         .map_err(|e| Error::Config(format!("failed to parse {}: {e}", path.display())))
+}
+
+/// Write a `toolchains.toml` configuration to disk.
+pub fn save_toolchains(path: &Path, config: &ToolchainsConfig) -> Result<(), Error> {
+    let content = toml::to_string_pretty(config)
+        .map_err(|e| Error::Config(format!("failed to serialize toolchains: {e}")))?;
+    fs::write(path, content)
+        .map_err(|e| Error::Config(format!("failed to write {}: {e}", path.display())))
 }
 
 /// Resolve an environment name to its ordered list of component tree OIDs.
