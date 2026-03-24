@@ -40,6 +40,29 @@ pub enum Command {
         toolchains: String,
     },
 
+    /// Run a command inside an environment and exit.
+    Run {
+        /// Environment name (defaults to project.default from config).
+        #[arg(long)]
+        env: Option<String>,
+
+        /// Isolation level (0 = host, 1 = workspace, 2 = read-only).
+        #[arg(long, default_value_t = 0)]
+        isolation: u8,
+
+        /// Path to .forge/environment.toml (default: ./.forge/environment.toml).
+        #[arg(long, default_value = ".forge/environment.toml")]
+        config: String,
+
+        /// Path to .forge/toolchains.toml (default: ./.forge/toolchains.toml).
+        #[arg(long, default_value = ".forge/toolchains.toml")]
+        toolchains: String,
+
+        /// The command and its arguments to run.
+        #[arg(trailing_var_arg = true, required = true)]
+        cmd: Vec<String>,
+    },
+
     /// Print the merged environment hash without materializing.
     Hash {
         /// Environment name (defaults to project.default from config).

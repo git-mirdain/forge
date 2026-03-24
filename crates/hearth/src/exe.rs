@@ -57,6 +57,38 @@ pub fn enter(
     spawn_shell(&store_path, capture.as_deref(), tree_oid, isolation, extras)
 }
 
+/// Run a command inside an environment and return its exit status.
+///
+/// `extras` are host paths appended to PATH after the env tree's `bin/`.
+pub fn run(
+    store: &Store,
+    tree_oid: Oid,
+    isolation: Isolation,
+    extras: &[String],
+    cmd: &[String],
+) -> Result<process::ExitStatus, Error> {
+    let store_path = store.materialize(tree_oid)?;
+
+    let capture = if isolation == Isolation::ReadOnly {
+        let id = run_id();
+        let dir = store.root().join("runs").join(&id).join("capture");
+        fs::create_dir_all(&dir)?;
+        set_read_only_recursive(&store_path)?;
+        Some(dir)
+    } else {
+        None
+    };
+
+    spawn_command(
+        &store_path,
+        capture.as_deref(),
+        tree_oid,
+        isolation,
+        extras,
+        cmd,
+    )
+}
+
 /// Print shell-eval-able direnv output for an environment tree.
 ///
 /// Replaces PATH with `<tree>/bin` (plus extras) and exports `HEARTH_ENV`.
@@ -67,16 +99,14 @@ pub fn direnv_output(env_path: &std::path::Path, tree_oid: Oid, extras: &[String
     println!("export HEARTH_ISOLATION=\"1\"");
 }
 
-fn spawn_shell(
+fn apply_env(
+    cmd: &mut process::Command,
     env_path: &std::path::Path,
     capture: Option<&std::path::Path>,
     tree_oid: Oid,
     isolation: Isolation,
     extras: &[String],
-) -> Result<process::ExitStatus, Error> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-
-    let mut cmd = process::Command::new(&shell);
+) {
     cmd.env("HEARTH_ENV", tree_oid.to_string());
     cmd.env("HEARTH_ISOLATION", (isolation as u8).to_string());
 
@@ -93,6 +123,34 @@ fn spawn_shell(
     if let Some(capture_dir) = capture {
         cmd.env("TMPDIR", capture_dir);
     }
+}
+
+fn spawn_shell(
+    env_path: &std::path::Path,
+    capture: Option<&std::path::Path>,
+    tree_oid: Oid,
+    isolation: Isolation,
+    extras: &[String],
+) -> Result<process::ExitStatus, Error> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+
+    let mut cmd = process::Command::new(&shell);
+    apply_env(&mut cmd, env_path, capture, tree_oid, isolation, extras);
+
+    Ok(cmd.status()?)
+}
+
+fn spawn_command(
+    env_path: &std::path::Path,
+    capture: Option<&std::path::Path>,
+    tree_oid: Oid,
+    isolation: Isolation,
+    extras: &[String],
+    args: &[String],
+) -> Result<process::ExitStatus, Error> {
+    let mut cmd = process::Command::new(&args[0]);
+    cmd.args(&args[1..]);
+    apply_env(&mut cmd, env_path, capture, tree_oid, isolation, extras);
 
     Ok(cmd.status()?)
 }

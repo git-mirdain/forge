@@ -62,6 +62,26 @@ fn run() -> Result<(), Error> {
             std::process::exit(status.code().unwrap_or(1));
         }
 
+        Command::Run {
+            env,
+            isolation,
+            config,
+            toolchains,
+            cmd,
+        } => {
+            let cfg = load_config(&PathBuf::from(&config))?;
+            let tc = std::path::Path::new(&toolchains)
+                .exists()
+                .then(|| load_toolchains(&PathBuf::from(&toolchains)))
+                .transpose()?;
+            let env = env.as_deref().unwrap_or_else(|| cfg.default_env());
+            let extras = resolve_extras(&cfg, env)?;
+            let oid = resolve_env(&store, &cfg, tc.as_ref(), env)?;
+            let level = Isolation::from_u8(isolation)?;
+            let status = exe::run(&store, oid, level, &extras, &cmd)?;
+            std::process::exit(status.code().unwrap_or(1));
+        }
+
         Command::Hash {
             env,
             config,
