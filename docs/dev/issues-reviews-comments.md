@@ -8,14 +8,120 @@ The git-data workspace provides three published crates — `git-ledger` (version
 
 **Goal**: Build issues, reviews, and comments in `git-forge` as a library backed by `git-ledger` and `git-chain`, then expose read tools via `forge-mcp` and write commands via the `forge` CLI.
 
-## Ref Layout (from git-forge.md)
+## Ref Layout
 
 ```text
-refs/forge/issue/<id>                  # ledger, sequential
-refs/forge/review/<id>                 # ledger, sequential
-refs/forge/comments/issue/<id>         # chain, per-entity
-refs/forge/comments/review/<id>        # chain, per-entity
+refs/forge/issue/<oid>                 # entity ref, keyed by initial commit OID
+refs/forge/review/<oid>                # entity ref, keyed by initial commit OID
+refs/forge/comments/issue/<oid>        # chain, per-entity
+refs/forge/comments/review/<oid>       # chain, per-entity
+refs/forge/meta/index/issues           # display ID ↔ OID mapping
+refs/forge/meta/index/reviews          # display ID ↔ OID mapping
+refs/forge/config                      # contributors, entity registrations, sync state
 ```
+
+Entity refs are keyed by the OID of the initial commit on that ref.
+This OID is permanent — it never changes even as the ref tip advances with edits.
+No UUIDs.
+
+### Index
+
+The index ref maps display IDs to OIDs and vice versa:
+
+```text
+refs/forge/meta/index/issues → commit → tree
+  3         → blob "ab3f1c9e..."       # display ID → OID
+  ab3f1c9e  → blob "3"                # OID → display ID
+  ff02c817  → blob "pending"          # staged, not yet synced
+  auth-bug  → blob "3"                # user alias → display ID
+```
+
+### Resolution
+
+Users reference entities with the `#` sigil.
+The input after `#` is resolved through the index:
+
+1. All digits → display ID lookup (e.g. `#3`).
+2. Otherwise → OID prefix or alias lookup (e.g. `#ab3f`, `#auth-bug`).
+3. OID prefixes work like git SHAs — shortest unambiguous prefix accepted.
+
+Both staged and synced entities resolve through the same mechanism.
+
+### Entity Creation
+
+Creation always writes a local entity ref immediately.
+Display ID assignment is deferred to sync.
+
+```text
+$ forge issue new "Fix auth bug"
+Created issue #ab3f1c9 (pending sync)
+
+$ forge issue show #ab3f
+# works immediately — indexed at creation time
+
+$ forge sync
+#ab3f1c9 → #3
+
+$ forge issue show #3     # works
+$ forge issue show #ab3f  # still works
+```
+
+### Sync and ID Assignment
+
+`forge sync` behavior depends on whether a remote is configured (binary check — no reachability probing):
+
+**Remote exists:**
+
+1. Push entity refs to remote.
+2. Server (trusted committer) assigns display IDs and writes the index.
+3. Client fetches the updated index.
+
+**No remote (air-gapped / local-only):**
+
+1. Client assigns display IDs locally and writes the index itself.
+2. If a remote is added later, the first sync pushes everything.
+   Server may remap display IDs.
+
+Display IDs are convenient but unstable until synced.
+OID references are always stable.
+
+### Write Protection
+
+| Ref | Who writes | Protected? |
+|---|---|---|
+| `refs/forge/issue/<oid>` | Client (author) | Append-only per entity |
+| `refs/forge/meta/index/*` | Server only (or client when no remote) | Yes |
+| `refs/forge/config` | Server/admin only | Yes |
+
+## Entity Tree Schemas
+
+### Issue
+
+```text
+refs/forge/issue/<oid> → commit → tree
+├── title           # plain text blob
+├── state           # plain text: "open" or "closed"
+├── body            # markdown blob
+├── labels/         # directory: empty blobs whose names are labels
+└── assignees/      # directory: empty blobs whose names are contributor IDs
+```
+
+No `author` blob — the first commit's author (from the git commit object) is the issue creator.
+
+### Review
+
+```text
+refs/forge/review/<oid> → commit → tree
+├── meta/
+│   ├── target_branch   # UTF-8 blob
+│   ├── state           # "open", "merged", or "closed"
+│   └── created         # RFC 3339 timestamp
+├── title               # plain text
+└── description         # markdown
+```
+
+No `author` blob.
+No revisions tree — revision tracking is out of scope for now.
 
 ## Approach
 
@@ -86,6 +192,8 @@ pub mod refs;
 - `REVIEW_PREFIX = "refs/forge/review/"`
 - `ISSUE_COMMENTS_PREFIX = "refs/forge/comments/issue/"`
 - `REVIEW_COMMENTS_PREFIX = "refs/forge/comments/review/"`
+- `ISSUE_INDEX = "refs/forge/meta/index/issues"`
+- `REVIEW_INDEX = "refs/forge/meta/index/reviews"`
 
 ### Step 1.2: Issue types and CRUD
 
@@ -94,14 +202,16 @@ pub mod refs;
 **Types**:
 
 - `IssueState { Open, Closed }` — derives `Serialize`
-- `Issue { id: u64, title, state, body, labels: Vec<String>, assignees: Vec<String> }` — derives `Serialize`
+- `Issue { oid: String, display_id: Option<u64>, title, state, body, labels: Vec<String>, assignees: Vec<String> }` — derives `Serialize`
+
+The `oid` is the initial commit OID (permanent identity). `display_id` is `None` while staged, `Some(n)` after sync.
 
 **Field mapping** (LedgerEntry fields ↔ Issue):
 
 | LedgerEntry field | Issue field | Notes |
 |---|---|---|
 | `"title"` | `title` | UTF-8 blob |
-| `"state"` | `state` | `"open"` or `"closed"` |
+| `"meta/state"` | `state` | `"open"` or `"closed"` |
 | `"body"` | `body` | UTF-8 blob |
 | `"labels/<name>"` | `labels` | Empty blob, name is the label |
 | `"assignees/<name>"` | `assignees` | Empty blob, name is contributor ID |
@@ -109,11 +219,11 @@ pub mod refs;
 **Functions** (all take `&git2::Repository`):
 
 - `issue_from_entry(entry: &LedgerEntry) -> Result<Issue>` — parse fields
-- `create_issue(repo, title, body, labels, assignees) -> Result<Issue>` — `Ledger::create` with `IdStrategy::Sequential`
-- `get_issue(repo, id) -> Result<Issue>` — `Ledger::read` then parse
-- `list_issues(repo) -> Result<Vec<Issue>>` — `Ledger::list` then read each
+- `create_issue(repo, title, body, labels, assignees) -> Result<Issue>` — creates entity ref keyed by initial commit OID, writes OID → "pending" to index
+- `get_issue(repo, oid_or_id) -> Result<Issue>` — resolve via index, then read
+- `list_issues(repo) -> Result<Vec<Issue>>` — enumerate entity refs, resolve display IDs from index
 - `list_issues_by_state(repo, state) -> Result<Vec<Issue>>` — filter after list
-- `update_issue(repo, id, title?, body?, state?, add_labels, remove_labels, add_assignees, remove_assignees) -> Result<Issue>` — build `Vec<Mutation>`, call `Ledger::update`
+- `update_issue(repo, oid_or_id, title?, body?, state?, add_labels, remove_labels, add_assignees, remove_assignees) -> Result<Issue>` — resolve, build `Vec<Mutation>`, call `Ledger::update`
 
 **Verify**: `cargo check -p git-forge`
 
@@ -130,33 +240,32 @@ Add `pub mod review;` to `lib.rs`.
 **Types**:
 
 - `ReviewState { Open, Merged, Closed }` — derives `Serialize`
-- `Revision { index: String, head_commit: String, timestamp: String }` — derives `Serialize`
-- `Review { id: u64, title, target_branch, state, created, description, revisions: Vec<Revision> }` — derives `Serialize`
+- `Review { oid: String, display_id: Option<u64>, title, target_branch, state, created, description }` — derives `Serialize`
+
+Same as issues: `oid` is the initial commit OID, `display_id` is `None` while staged.
 
 **Field mapping** (LedgerEntry ↔ Review):
 
 | LedgerEntry field | Review field | Format |
 |---|---|---|
-| `"meta"` | target_branch, state, created | key = value, one per line |
+| `"meta/target_branch"` | target_branch | UTF-8 blob |
+| `"meta/state"` | state | `"open"`, `"merged"`, or `"closed"` |
+| `"meta/created"` | created | RFC 3339 timestamp blob |
 | `"title"` | title | plain text |
 | `"description"` | description | markdown |
-| `"revisions/001"` | revisions[0] | key = value: head_commit, timestamp |
 
 **Helpers**:
 
-- `format_kv(pairs: &[(&str, &str)]) -> Vec<u8>` — serialize `"key = value\n"` lines
-- `parse_kv(content: &str) -> HashMap<&str, &str>` — parse `line.split_once(" = ")`
 - `now_rfc3339() -> String` — format current time as RFC 3339 using only `std::time`
 
 **Functions**:
 
 - `review_from_entry(entry: &LedgerEntry) -> Result<Review>`
-- `create_review(repo, title, description, target_branch, head_commit) -> Result<Review>` — author from `repo.signature()`, timestamp via `now_rfc3339()`
-- `get_review(repo, id) -> Result<Review>`
+- `create_review(repo, title, description, target_branch) -> Result<Review>` — creates entity ref keyed by initial commit OID, writes OID → "pending" to index
+- `get_review(repo, oid_or_id) -> Result<Review>`
 - `list_reviews(repo) -> Result<Vec<Review>>`
 - `list_reviews_by_state(repo, state) -> Result<Vec<Review>>`
-- `update_review(repo, id, title?, description?, state?) -> Result<Review>` — for state change: parse meta, update state line, re-serialize, `Mutation::Set("meta", ...)`
-- `add_revision(repo, id, head_commit) -> Result<Review>` — count existing `revisions/*`, next index zero-padded to 3 digits
+- `update_review(repo, oid_or_id, title?, description?, state?) -> Result<Review>`
 
 **Verify**: `cargo check -p git-forge`
 
@@ -191,8 +300,8 @@ Add `pub mod comment;` to `lib.rs`.
 - `parse_trailers(message: &str) -> (String, HashMap<String, String>)` — returns (body, trailers).
   Trailer block = last paragraph where every non-empty line matches `^[\w-]+: .+$`
 - `comment_from_chain_entry(repo: &Repository, entry: &ChainEntry) -> Result<Comment>` — load commit, parse message, extract second parent
-- `issue_comment_ref(id: u64) -> String`
-- `review_comment_ref(id: u64) -> String`
+- `issue_comment_ref(oid: &str) -> String`
+- `review_comment_ref(oid: &str) -> String`
 
 **Functions**:
 
@@ -243,27 +352,26 @@ fn test_repo() -> (TempDir, Repository) {
 
 ### Step 4.2: Issue tests (`tests/issue.rs`)
 
-- `create_assigns_id_1`
-- `create_sequential_ids`
-- `get_issue_roundtrip`
-- `list_issues_sorted`
+- `create_returns_oid`
+- `get_issue_by_oid_roundtrip`
+- `list_issues`
 - `list_issues_by_state`
 - `update_title`
 - `update_state`
 - `labels_roundtrip`
 - `assignees_roundtrip`
+- `sync_assigns_display_id`
+- `resolve_by_oid_prefix`
 
 ### Step 4.3: Review tests (`tests/review.rs`)
 
-- `create_assigns_id_1`
+- `create_returns_oid`
 - `create_stores_all_fields`
 - `get_review_roundtrip`
 - `list_reviews`
 - `list_reviews_by_state`
 - `update_title_and_description`
 - `update_state_to_merged`
-- `add_revision`
-- `revision_indices_zero_padded`
 
 ### Step 4.4: Comment tests (`tests/comment.rs`)
 
@@ -298,11 +406,11 @@ Add `fn open_repo(&self) -> anyhow::Result<Repository>`.
 Add to `#[tool_router] impl ForgeServer`:
 
 - `list_issues(state: Option<String>) -> String` — JSON array
-- `get_issue(id: u64) -> String` — JSON object
+- `get_issue(ref: String) -> String` — accepts display ID or OID prefix
 - `list_reviews(state: Option<String>) -> String`
-- `get_review(id: u64) -> String`
-- `list_issue_comments(id: u64) -> String`
-- `list_review_comments(id: u64) -> String`
+- `get_review(ref: String) -> String` — accepts display ID or OID prefix
+- `list_issue_comments(ref: String) -> String`
+- `list_review_comments(ref: String) -> String`
 
 Each opens repo, calls git-forge library, serializes via `serde_json::to_string_pretty`.
 
@@ -318,8 +426,9 @@ Each opens repo, calls git-forge library, serializes via `serde_json::to_string_
 
 ```text
 forge issue {new, show, list, edit, close, reopen, label, assign}
-forge review {new, show, list, edit, close, merge, revise}
+forge review {new, show, list, edit, close, merge}
 forge comment {add, reply, resolve, list}
+forge sync
 ```
 
 Each command opens `Repository::discover(".")` and delegates to library functions.
