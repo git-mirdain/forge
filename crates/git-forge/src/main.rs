@@ -7,7 +7,6 @@ use std::process;
 
 mod contributor;
 mod install;
-mod run;
 mod sync;
 
 fn main() {
@@ -39,21 +38,6 @@ fn main() {
                 process::exit(1);
             }
         }
-        Commands::Run {
-            env,
-            isolation,
-            config,
-            toolchains,
-            store,
-            command,
-        } => run::run(
-            env.as_deref(),
-            isolation,
-            &config,
-            &toolchains,
-            store.as_deref(),
-            &command,
-        ),
     }
 }
 

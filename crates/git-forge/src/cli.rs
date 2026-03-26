@@ -119,30 +119,4 @@ pub enum Commands {
         /// Remote to sync with. Defaults to `origin`.
         remote: Option<String>,
     },
-
-    /// Run a command inside a hearth environment.
-    Run {
-        /// Environment name (defaults to project.default from config).
-        #[arg(long)]
-        env: Option<String>,
-
-        /// Isolation level (0 = host, 1 = workspace, 2 = read-only).
-        #[arg(long, default_value_t = 1)]
-        isolation: u8,
-
-        /// Path to .forge/environment.toml.
-        #[arg(long, default_value = ".forge/environment.toml")]
-        config: String,
-
-        /// Path to .forge/toolchains.toml.
-        #[arg(long, default_value = ".forge/toolchains.toml")]
-        toolchains: String,
-
-        /// Path to the hearth store.
-        #[arg(long, env = "HEARTH_STORE")]
-        store: Option<String>,
-
-        /// Command to run. Defaults to $SHELL.
-        command: Vec<String>,
-    },
 }
