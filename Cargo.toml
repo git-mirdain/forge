@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/git-forge",
     "crates/forge-mcp",
+    "crates/forge-github",
 ]
 
 [workspace.package]
@@ -23,7 +24,14 @@ clap = { version = "4.5.60", features = ["derive"] }
 clap_mangen = "0.2.31"
 anyhow = "1"
 git-forge = { path = "crates/git-forge" }
+forge-github = { path = "crates/forge-github" }
 rmcp = { version = "1.3.0", features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+git2 = "0.20.4"
+git-ledger = "0.1.0-alpha.1"
+git-chain = "0.1.0-alpha.1"
+tempfile = "3"
+octocrab = "0.44"
+toml = "0.8"
