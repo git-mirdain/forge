@@ -3,6 +3,7 @@
 //! This crate provides both a library of MCP tool handlers and a binary
 //! that runs the server over stdio.
 
+mod issue;
 mod server;
 
-pub use server::ForgeServer;
+pub use server::ForgeMcpServer;

@@ -620,11 +620,12 @@ name = "forge-mcp"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "facet-json",
  "git-forge",
  "git2",
  "rmcp",
+ "schemars",
  "serde",
- "serde_json",
  "tokio",
 ]
 
