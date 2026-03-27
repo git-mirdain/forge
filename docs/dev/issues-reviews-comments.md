@@ -7,6 +7,8 @@ Currently only two stub crates exist: `git-forge` (empty lib + empty binary) and
 The git-data workspace provides three published crates — `git-ledger` (versioned records as refs), `git-chain` (append-only event streams), and `git-metadata` (annotations and relations) — that replace the boilerplate the old forge crates reimplemented.
 
 **Goal**: Build issues, reviews, and comments in `git-forge` as a library backed by `git-ledger` and `git-chain`, then expose read tools via `forge-mcp` and write commands via the `forge` CLI.
+The `forge-github` crate provides bidirectional sync with GitHub.
+A `forge-server` daemon coordinates GitHub sync automatically; `forge sync` is a git-only manual fallback for pushing/fetching entity refs.
 
 ## Ref Layout
 
@@ -17,8 +19,8 @@ refs/forge/comments/issue/<oid>        # chain, per-entity
 refs/forge/comments/review/<oid>       # chain, per-entity
 refs/forge/meta/index/issues           # display ID ↔ OID mapping
 refs/forge/meta/index/reviews          # display ID ↔ OID mapping
-refs/forge/config                      # contributors, entity registrations, sync state
-refs/forge/sync/github/<owner>/<repo>  # GitHub import state (import-only, written locally)
+refs/forge/config                      # contributors, entity registrations, sync config
+refs/forge/sync/github/<owner>/<repo>  # GitHub bidirectional sync state (local-only)
 ```
 
 Entity refs are keyed by the OID of the initial commit on that ref.
@@ -40,7 +42,7 @@ refs/forge/meta/index/issues → commit → tree
 ```
 
 Display IDs are strings: pure-numeric for local entities (`"3"`), sigil-prefixed for remote-sourced entities (`"GH1"`).
-The sigil is configurable (see Phase 7); `"GH"` is the default for GitHub imports.
+The sigil is configurable (see Phase 1 Step 1.6); `"GH"` is the default for GitHub.
 
 ### Resolution
 
@@ -75,7 +77,8 @@ $ forge issue show #ab3f  # still works
 
 ### Sync and ID Assignment
 
-`forge sync` behavior depends on whether a remote is configured (binary check — no reachability probing):
+`forge sync` is a git-only operation — it pushes/fetches entity refs and index refs.
+It never talks to the GitHub API.
 
 **Remote exists:**
 
@@ -165,6 +168,9 @@ Free functions taking `&git2::Repository`, no traits or entity abstraction (per 
 Issues and reviews delegate to `git-ledger::Ledger`.
 Comments delegate to `git-chain::Chain`.
 
+Development follows vertical slices: each entity type is built end-to-end (library → tests → MCP → CLI → GitHub sync → server) before starting the next.
+The `forge` CLI binary lives in `git-forge` and never calls `forge-github` directly; only `forge-server` depends on both.
+
 ---
 
 ## Phase 0 — Dependencies
@@ -181,12 +187,13 @@ git-ledger = "0.1.0-alpha.2"
 git-chain = "0.1.0-alpha.1"
 tempfile = "3"
 octocrab = "0.44"
-tokio = { version = "1", features = ["full"] }  # already present; verify feature set covers async
+tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 forge-github = { path = "crates/forge-github" }
+forge-server = { path = "crates/forge-server" }
 ```
 
-Add `"crates/forge-github"` to `[workspace] members`.
+Add `"crates/forge-github"` and `"crates/forge-server"` to `[workspace] members`.
 
 ### Step 0.2: git-forge deps
 
@@ -198,7 +205,7 @@ git2 = { workspace = true }
 git-ledger = { workspace = true }
 git-chain = { workspace = true }
 anyhow = { workspace = true }
-clap = { workspace = true }
+figue = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
@@ -218,7 +225,7 @@ version = "0.0.0"
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
-description = "GitHub import adapter for the forge store."
+description = "GitHub bidirectional sync adapter for the forge store."
 
 [dependencies]
 git-forge = { workspace = true }
@@ -236,10 +243,50 @@ tempfile = { workspace = true }
 **File**: `crates/forge-github/src/lib.rs` — empty stub:
 
 ```rust
-//! GitHub import adapter for the forge store.
+//! GitHub bidirectional sync adapter for the forge store.
 ```
 
-### Step 0.4: forge-mcp deps
+### Step 0.4: forge-server crate scaffold
+
+**Directory**: `crates/forge-server/`
+
+**File**: `crates/forge-server/Cargo.toml`
+
+```toml
+[package]
+name = "forge-server"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Forge sync daemon — watches refs and coordinates GitHub sync."
+
+[[bin]]
+name = "forge-server"
+path = "src/main.rs"
+
+[dependencies]
+git-forge = { workspace = true }
+forge-github = { workspace = true }
+git2 = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+```
+
+**File**: `crates/forge-server/src/main.rs` — minimal stub:
+
+```rust
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    println!("forge-server: not yet implemented");
+    Ok(())
+}
+```
+
+### Step 0.5: forge-mcp deps
 
 **File**: `crates/forge-mcp/Cargo.toml`
 
@@ -249,9 +296,9 @@ Add `git2 = { workspace = true }` to `[dependencies]`.
 
 ---
 
----
+## Phase 1 — Issues
 
-## Phase 1 — Library: Issues
+Full vertical slice: library → tests → MCP tools → CLI → GitHub import/export → server sync.
 
 ### Step 1.1: Module structure
 
@@ -282,7 +329,7 @@ pub mod refs;
 - `IssueState { Open, Closed }` — derives `Serialize`
 - `Issue { oid: String, display_id: Option<String>, title, state, body, labels: Vec<String>, assignees: Vec<String> }` — derives `Serialize`
 
-The `oid` is the initial commit OID (permanent identity). `display_id` is `None` while staged, `Some("3")` for local, `Some("GH1")` for GitHub-imported.
+The `oid` is the initial commit OID (permanent identity). `display_id` is `None` while staged, `Some("3")` for local, `Some("GH1")` for GitHub-synced.
 
 **Field mapping** (LedgerEntry fields ↔ Issue):
 
@@ -305,54 +352,285 @@ The `oid` is the initial commit OID (permanent identity). `display_id` is `None`
 
 **Verify**: `cargo check -p git-forge`
 
----
+### Step 1.3: Test infrastructure and issue tests
 
-## Phase 2 — Library: Reviews
+**File**: `crates/git-forge/src/lib.rs` — add `#[cfg(test)] mod tests;`
 
-### Step 2.1: Review types and CRUD
+**File**: `crates/git-forge/src/tests.rs` — declare submodules:
 
-**File**: `crates/git-forge/src/review.rs`
+```rust
+mod issue;
+```
 
-Add `pub mod review;` to `lib.rs`.
+**Shared helper** (in `tests.rs` or a `tests/helpers.rs`):
+
+```rust
+fn test_repo() -> (TempDir, Repository) {
+    let dir = TempDir::new().unwrap();
+    let repo = Repository::init(dir.path()).unwrap();
+    let mut cfg = repo.config().unwrap();
+    cfg.set_str("user.name", "Test").unwrap();
+    cfg.set_str("user.email", "test@test.com").unwrap();
+    drop(cfg);
+    let sig = repo.signature().unwrap();
+    let tree = repo.find_tree(repo.treebuilder(None).unwrap().write().unwrap()).unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+    (dir, repo)
+}
+```
+
+**Issue tests** (`tests/issue.rs`):
+
+- `create_returns_oid`
+- `get_issue_by_oid_roundtrip`
+- `list_issues`
+- `list_issues_by_state`
+- `update_title`
+- `update_state`
+- `labels_roundtrip`
+- `assignees_roundtrip`
+- `sync_assigns_display_id`
+- `resolve_by_oid_prefix`
+
+**Verify**: `cargo test -p git-forge`
+
+### Step 1.4: MCP read tools — issues
+
+**File**: `crates/forge-mcp/src/server.rs`
+
+Add `repo_path: PathBuf` to `ForgeServer`.
+Discover via `git2::Repository::discover(".")` in `new()`.
+Add `fn open_repo(&self) -> anyhow::Result<Repository>`.
+
+Add to `#[tool_router] impl ForgeServer`:
+
+- `list_issues(state: Option<String>) -> String` — JSON array
+- `get_issue(ref: String) -> String` — accepts display ID or OID prefix
+
+Each opens repo, calls git-forge library, serializes via `serde_json::to_string_pretty`.
+
+**Verify**: `cargo check -p forge-mcp`
+
+### Step 1.5: CLI — issue commands
+
+**File**: `crates/git-forge/src/main.rs`
+
+```text
+forge issue {new, show, list, edit, close, reopen, label, assign}
+forge sync
+```
+
+Each command opens `Repository::discover(".")` and delegates to library functions.
+Output to stdout.
+
+`forge sync` is git-only: pushes entity refs to the forge remote and fetches the updated index.
+It does not talk to the GitHub API.
+
+Add `pub mod cli;` to `lib.rs` with the figue command definitions in `src/cli.rs`.
+Figue's dynamic dispatch model allows future plugins (e.g. `forge-github` registering `forge github` subcommands) without compile-time coupling.
+
+**Verify**: `cargo build -p git-forge` and `./target/debug/forge --help`
+
+### Step 1.6: forge-github — config, sync state, and client
+
+Shared infrastructure for both import and export directions.
+
+**File**: `crates/forge-github/src/config.rs`
 
 **Types**:
 
-- `ReviewState { Open, Merged, Closed }` — derives `Serialize`
-- `ReviewTarget { head: String, base: Option<String> }` — derives `Serialize`
-- `Review { oid: String, display_id: Option<String>, title, target: ReviewTarget, source_ref: Option<String>, state, description }` — derives `Serialize`
+- `GitHubSyncConfig { owner: String, repo: String, sigil: String, token: Option<String> }`
+  - `sigil` defaults to `"GH"` when absent from `refs/forge/config`
+  - `token` falls back to `GITHUB_TOKEN` env var if `None`
 
-Same as issues: `oid` is the initial commit OID, `display_id` is `None` while staged, `Some("GH1")` for GitHub-imported.
-No timestamp fields — use the git commit's author date for created/updated.
+**`refs/forge/config` tree layout** — tree of trees, each value is a plain UTF-8 blob:
 
-**Field mapping** (LedgerEntry ↔ Review):
-
-| LedgerEntry field | Review field | Format |
-|---|---|---|
-| `"meta/state"` | state | `"open"`, `"merged"`, or `"closed"` |
-| `"meta/ref"` | source_ref | optional UTF-8 blob (ref name) |
-| `"meta/target/head"` | target.head | OID string |
-| `"meta/target/base"` | target.base | optional OID string |
-| `"objects/<oid>"` | (not in struct) | pinned objects, managed internally |
-| `"title"` | title | plain text |
-| `"description"` | description | markdown |
+```text
+refs/forge/config → commit → tree
+  sync/
+    github/
+      <owner>/
+        <repo>/
+          sigil   → blob "GH"
+```
 
 **Functions**:
 
-- `review_from_entry(entry: &LedgerEntry) -> Result<Review>`
-- `create_review(repo, title, description, target: ReviewTarget, source_ref: Option<&str>) -> Result<Review>` — creates entity ref keyed by initial commit OID, pins target objects in `objects/`, writes OID → "pending" to index
-- `get_review(repo, oid_or_id) -> Result<Review>`
-- `list_reviews(repo) -> Result<Vec<Review>>`
-- `list_reviews_by_state(repo, state) -> Result<Vec<Review>>`
-- `update_review(repo, oid_or_id, title?, description?, state?) -> Result<Review>`
-- `refresh_review_target(repo, oid_or_id) -> Result<Review>` — re-resolves `meta/ref` to update `meta/target/*` and `objects/`; no-op if `meta/ref` is absent
-
-**Verify**: `cargo check -p git-forge`
+- `read_github_config(repo: &Repository, owner: &str, repo_name: &str) -> Result<GitHubSyncConfig>` — navigates `sync/github/<owner>/<repo_name>/sigil` blob in `refs/forge/config` tree, fills defaults if absent
+- `write_github_config(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<()>` — writes blobs back into the tree, creates new commit on `refs/forge/config`
 
 ---
 
-## Phase 3 — Library: Comments
+**File**: `crates/forge-github/src/state.rs`
 
-### Step 3.1: Comment types and operations
+Tracks which GitHub entities have been synced (both directions).
+
+```text
+refs/forge/sync/github/<owner>/<repo> → commit → tree
+  issues/<github_number>              → blob "<forge_oid>"
+  reviews/<github_number>             → blob "<forge_oid>"
+  comments/<github_comment_id>        → blob "<chain_entry_oid>"
+```
+
+`<github_number>` is the decimal string of the GitHub issue/PR number.
+This ref is written locally; it is never pushed to the forge remote.
+
+Both import and export write to the same state:
+
+- **Import** writes `issues/<n> → <oid>` after creating a forge entity from a GitHub issue.
+- **Export** writes `issues/<n> → <oid>` after creating a GitHub issue from a forge entity.
+- Either direction can check whether a mapping already exists to avoid duplicates.
+
+**Functions**:
+
+- `sync_ref_name(owner: &str, repo: &str) -> String` — `"refs/forge/sync/github/<owner>/<repo>"`
+- `load_sync_state(repo: &Repository, owner: &str, repo_name: &str) -> Result<HashMap<String, String>>` — returns `"issues/<n>"` → OID map
+- `save_sync_state(repo: &Repository, owner: &str, repo_name: &str, state: &HashMap<String, String>) -> Result<()>` — writes new commit to sync ref
+- `lookup_by_github_id(state: &HashMap<String, String>, kind: &str, github_number: u64) -> Option<&str>` — key is `"issues/<n>"` or `"reviews/<n>"`
+- `lookup_by_forge_oid(state: &HashMap<String, String>, kind: &str, forge_oid: &str) -> Option<u64>` — reverse scan of `<kind>/*` values for matching OID; returns the GitHub number
+
+---
+
+**File**: `crates/forge-github/src/client.rs`
+
+Thin wrapper over `octocrab` to page through all results.
+
+**Types** (serde structs mirroring the GitHub REST API response fields used):
+
+- `GhIssue { number: u64, title: String, body: Option<String>, state: String, labels: Vec<GhLabel>, assignees: Vec<GhUser>, user: GhUser, created_at: String, pull_request: Option<()> }`
+  - `pull_request` field presence distinguishes PRs from issues in the list API
+- `GhIssueComment { id: u64, body: Option<String>, user: GhUser, created_at: String }`
+- `GhLabel { name: String }`
+- `GhUser { login: String }`
+
+Pull request types (`GhPull`, `GhReviewComment`, `GhRef`) are added in Phase 3.
+
+**Functions** (all `async`):
+
+- `make_client(token: Option<&str>) -> Result<Octocrab>` — builds octocrab instance; if token is None, checks `GITHUB_TOKEN` env var; returns error if neither present
+- `fetch_issues(client: &Octocrab, owner: &str, repo: &str) -> Result<Vec<GhIssue>>` — pages through `/repos/{owner}/{repo}/issues?state=all&filter=all`, excludes entries where `pull_request` is present
+- `fetch_issue_comments(client: &Octocrab, owner: &str, repo: &str, number: u64) -> Result<Vec<GhIssueComment>>`
+- `create_github_issue(client: &Octocrab, owner: &str, repo: &str, title: &str, body: &str, labels: &[String], assignees: &[String]) -> Result<u64>` — POST, returns issue number
+- `update_github_issue(client: &Octocrab, owner: &str, repo: &str, number: u64, title: Option<&str>, body: Option<&str>, state: Option<&str>, labels: Option<&[String]>, assignees: Option<&[String]>) -> Result<()>` — PATCH
+- `create_github_issue_comment(client: &Octocrab, owner: &str, repo: &str, number: u64, body: &str) -> Result<u64>` — POST, returns comment ID
+
+**Verify**: `cargo check -p forge-github`
+
+### Step 1.7: GitHub import — issues
+
+**File**: `crates/forge-github/src/import.rs`
+
+**Types**:
+
+- `SyncReport { imported: usize, exported: usize, skipped: usize, failed: usize }`
+
+**Mapping** (GitHub → forge):
+
+| GitHub field | Forge field | Notes |
+|---|---|---|
+| `title` | `title` | direct |
+| `body` | `body` | `None` → empty string |
+| `state` | `state` | map directly |
+| `labels[].name` | `labels` | direct |
+| `assignees[].login` | `assignees` | GitHub login as contributor ID |
+| `user.login` | commit author name | used as git signature name in ledger commit |
+| `created_at` | commit author timestamp | RFC 3339 → git time |
+| issue `number` | display ID alias | stored as `"<sigil><number>"`, e.g. `"GH1"` |
+
+For the git signature on imported commits, use `(user.login, "<login>@github.invalid")` so authorship is preserved without exposing real emails.
+The commit timestamp should use `created_at` from the GitHub payload, not the current time.
+
+**Functions**:
+
+- `import_issues(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport>` — async
+  1. Build octocrab client from `cfg.token`
+  2. Load sync state
+  3. Fetch all issues (excluding PRs)
+  4. For each: if `"issues/<n>"` in sync state → skip; else call `git_forge::issue::create_issue`, write display ID `"<sigil><n>"` to index immediately (no "pending"), update sync state
+  5. Save sync state
+
+### Step 1.8: GitHub export — issues
+
+**File**: `crates/forge-github/src/export.rs`
+
+**Functions**:
+
+- `export_issue(repo: &Repository, cfg: &GitHubSyncConfig, forge_oid: &str) -> Result<u64>` — async
+  1. Check sync state: if `lookup_by_forge_oid(state, "issues", forge_oid)` returns `Some` → already exported, return the GitHub number
+  2. Read issue from `refs/forge/issue/<forge_oid>`
+  3. Call `create_github_issue(client, owner, repo, title, body, labels, assignees)`
+  4. Get back GitHub issue number `n`
+  5. Write `issues/<n> → <forge_oid>` to sync state
+  6. Write `<sigil><n> → <forge_oid>` and `<forge_oid> → <sigil><n>` aliases to index
+  7. Return `n`
+
+- `export_pending_issues(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport>` — async
+  1. Scan index for entries with value `"pending"`
+  2. For each pending OID: call `export_issue`
+  3. On success, the pending entry is replaced by the `<sigil><n>` alias
+
+- `sync_issue_updates(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport>` — async
+  1. For each entity in sync state: compare forge entity tip commit with a stored "last synced" marker
+  2. If the forge entity has been updated since last sync: call `update_github_issue` with changed fields
+  3. Future: also detect GitHub-side updates and pull them into the forge entity
+
+### Step 1.9: forge-server — issue sync
+
+**File**: `crates/forge-server/src/main.rs`
+
+The forge-server daemon watches for new forge entities and coordinates GitHub sync.
+
+**Startup behavior**:
+
+1. Open `Repository::discover(".")`
+2. Read GitHub config from `refs/forge/config`; if absent, run without GitHub sync
+3. Assign display IDs for any pending entities (trusted committer role)
+4. Run initial sync: `import_issues` then `export_pending_issues`
+5. Enter poll loop
+
+**Poll loop** (configurable interval, default 60s):
+
+1. Scan for new entity refs (pending entries in index)
+2. Export pending entities to GitHub
+3. Import new GitHub issues
+4. Assign display IDs for any remaining pending entities
+
+**CLI**:
+
+```text
+forge-server [--repo <path>] [--poll-interval <seconds>]
+forge-server --once   # single sync pass, then exit
+```
+
+`--once` is the manual fallback for GitHub sync when the daemon isn't running long-term.
+
+**Verify**: `cargo build -p forge-server`
+
+### Step 1.10: forge-github tests — issues
+
+**File**: `crates/forge-github/src/tests/`
+
+Tests use a `TempDir` git repo (same `test_repo()` helper pattern) and mock GitHub API responses — no live network calls.
+Use `octocrab`'s mock support or pass client functions as function pointers.
+
+- `import_single_issue_creates_ref` — verify `refs/forge/issue/<oid>` exists and display ID `"GH1"` resolves
+- `import_skips_already_imported` — run import twice, second run produces `skipped = 1`
+- `sigil_configurable` — set `sigil = "ACME"`, verify display ID is `"ACME1"`
+- `export_issue_creates_github_issue` — verify sync state has `issues/<n> → <oid>` and index has `GH<n>` alias
+- `export_skips_already_exported` — export same OID twice, second call is a no-op
+- `roundtrip_no_duplicates` — export an issue, then run import; imported set is empty (sync state prevents re-import)
+
+**Verify**: `cargo test -p forge-github`
+
+---
+
+## Phase 2 — Comments
+
+Adds comment support for issues.
+Comments use `git-chain` for append-only event streams.
+The `forge` CLI gets comment commands; the server extends to sync issue comments with GitHub.
+
+### Step 2.1: Comment types and operations
 
 **File**: `crates/git-forge/src/comment.rs`
 
@@ -396,53 +674,143 @@ If it doesn't, use the constant `4b825dc642cb6eb9a060e54bf899d15b4fdd19d0` parse
 
 **Verify**: `cargo check -p git-forge`
 
+### Step 2.2: Comment tests
+
+**File**: `crates/git-forge/src/tests.rs` — add `mod comment;`
+
+**Comment tests** (`tests/comment.rs`):
+
+- `add_comment_creates_chain`
+- `add_second_comment`
+- `reply_threading`
+- `list_comments_chronological`
+- `list_thread`
+- `resolve_sets_trailer`
+- `edit_sets_replaces`
+- `anchor_object_with_range`
+- `anchor_commit_range`
+
+**Verify**: `cargo test -p git-forge`
+
+### Step 2.3: MCP read tools — issue comments
+
+**File**: `crates/forge-mcp/src/server.rs`
+
+Add to `#[tool_router] impl ForgeServer`:
+
+- `list_issue_comments(ref: String) -> String` — accepts issue display ID or OID prefix
+
+**Verify**: `cargo check -p forge-mcp`
+
+### Step 2.4: CLI — comment commands
+
+**File**: `crates/git-forge/src/main.rs`
+
+```text
+forge comment {add, reply, resolve, list}
+```
+
+Commands take an `--issue <ref>` flag to specify the parent entity.
+Phase 3 extends these with `--review <ref>`.
+
+**Verify**: `cargo build -p git-forge`
+
+### Step 2.5: GitHub import — issue comments
+
+**File**: `crates/forge-github/src/import.rs`
+
+- `import_issue_comments(repo: &Repository, cfg: &GitHubSyncConfig, github_number: u64) -> Result<SyncReport>` — async
+  1. Fetch issue comments from GitHub API
+  2. For each comment: check sync state `comments/<github_comment_id>`; if present → skip
+  3. Call `git_forge::comment::add_comment` with body text
+  4. Add `Github-Id: <id>` trailer to the chain commit message for secondary dedup
+  5. Write `comments/<github_comment_id> → <chain_entry_oid>` to sync state
+
+Update `import_issues` to call `import_issue_comments` for each imported issue.
+
+### Step 2.6: GitHub export — issue comments
+
+**File**: `crates/forge-github/src/export.rs`
+
+- `export_issue_comments(repo: &Repository, cfg: &GitHubSyncConfig, forge_issue_oid: &str) -> Result<SyncReport>` — async
+  1. Look up GitHub issue number via `lookup_by_forge_oid(state, "issues", forge_issue_oid)`; if `None` → issue not yet exported, skip
+  2. Walk the comment chain for the issue
+  3. For each chain entry: check sync state `comments/*` values for matching chain entry OID; if present → skip
+  4. Call `create_github_issue_comment(client, owner, repo, github_number, body)`
+  5. Write `comments/<github_comment_id> → <chain_entry_oid>` to sync state
+
+Update `export_pending_issues` to also call `export_issue_comments` for each exported issue.
+
+### Step 2.7: forge-server — comment sync
+
+**File**: `crates/forge-server/src/main.rs`
+
+Extend the poll loop:
+
+1. After issue import/export, sync comments for all synced issues
+2. Import new GitHub comments → forge chains
+3. Export new forge chain entries → GitHub comments
+
+### Step 2.8: forge-github tests — comments
+
+- `import_issue_comments_adds_chain` — import a GitHub issue's comments, verify chain entries
+- `import_comment_skips_already_imported` — idempotent re-run
+- `export_issue_comment_creates_github_comment` — verify sync state has `comments/<id> → <chain_oid>`
+- `export_comment_skips_already_exported` — idempotent re-run
+- `roundtrip_comments_no_duplicates` — export comments, then import; no duplicates
+
+**Verify**: `cargo test -p forge-github`
+
 ---
 
-## Phase 4 — Tests
+## Phase 3 — Reviews
 
-### Step 4.1: Test infrastructure
+Full vertical slice for reviews, including review comments (which are structurally different from issue comments — they anchor to commits, files, and lines).
 
-**File**: `crates/git-forge/src/lib.rs` — add `#[cfg(test)] mod tests;`
+### Step 3.1: Review types and CRUD
 
-**File**: `crates/git-forge/src/tests.rs` — declare submodules:
+**File**: `crates/git-forge/src/review.rs`
 
-```rust
-mod issue;
-mod review;
-mod comment;
-```
+Add `pub mod review;` to `lib.rs`.
 
-**Shared helper** (in `tests.rs` or a `tests/helpers.rs`):
+**Types**:
 
-```rust
-fn test_repo() -> (TempDir, Repository) {
-    let dir = TempDir::new().unwrap();
-    let repo = Repository::init(dir.path()).unwrap();
-    let mut cfg = repo.config().unwrap();
-    cfg.set_str("user.name", "Test").unwrap();
-    cfg.set_str("user.email", "test@test.com").unwrap();
-    drop(cfg);
-    let sig = repo.signature().unwrap();
-    let tree = repo.find_tree(repo.treebuilder(None).unwrap().write().unwrap()).unwrap();
-    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
-    (dir, repo)
-}
-```
+- `ReviewState { Open, Merged, Closed }` — derives `Serialize`
+- `ReviewTarget { head: String, base: Option<String> }` — derives `Serialize`
+- `Review { oid: String, display_id: Option<String>, title, target: ReviewTarget, source_ref: Option<String>, state, description }` — derives `Serialize`
 
-### Step 4.2: Issue tests (`tests/issue.rs`)
+Same as issues: `oid` is the initial commit OID, `display_id` is `None` while staged, `Some("GH1")` for GitHub-synced.
+No timestamp fields — use the git commit's author date for created/updated.
 
-- `create_returns_oid`
-- `get_issue_by_oid_roundtrip`
-- `list_issues`
-- `list_issues_by_state`
-- `update_title`
-- `update_state`
-- `labels_roundtrip`
-- `assignees_roundtrip`
-- `sync_assigns_display_id`
-- `resolve_by_oid_prefix`
+**Field mapping** (LedgerEntry ↔ Review):
 
-### Step 4.3: Review tests (`tests/review.rs`)
+| LedgerEntry field | Review field | Format |
+|---|---|---|
+| `"meta/state"` | state | `"open"`, `"merged"`, or `"closed"` |
+| `"meta/ref"` | source_ref | optional UTF-8 blob (ref name) |
+| `"meta/target/head"` | target.head | OID string |
+| `"meta/target/base"` | target.base | optional OID string |
+| `"objects/<oid>"` | (not in struct) | pinned objects, managed internally |
+| `"title"` | title | plain text |
+| `"description"` | description | markdown |
+
+**Functions**:
+
+- `review_from_entry(entry: &LedgerEntry) -> Result<Review>`
+- `create_review(repo, title, description, target: ReviewTarget, source_ref: Option<&str>) -> Result<Review>` — creates entity ref keyed by initial commit OID, pins target objects in `objects/`, writes OID → "pending" to index
+- `get_review(repo, oid_or_id) -> Result<Review>`
+- `list_reviews(repo) -> Result<Vec<Review>>`
+- `list_reviews_by_state(repo, state) -> Result<Vec<Review>>`
+- `update_review(repo, oid_or_id, title?, description?, state?) -> Result<Review>`
+- `refresh_review_target(repo, oid_or_id) -> Result<Review>` — re-resolves `meta/ref` to update `meta/target/*` and `objects/`; no-op if `meta/ref` is absent
+
+**Verify**: `cargo check -p git-forge`
+
+### Step 3.2: Review tests
+
+**File**: `crates/git-forge/src/tests.rs` — add `mod review;`
+
+**Review tests** (`tests/review.rs`):
 
 - `create_returns_oid`
 - `create_stores_all_fields`
@@ -458,222 +826,115 @@ fn test_repo() -> (TempDir, Repository) {
 - `refresh_target_updates_objects`
 - `refresh_noop_without_ref`
 
-### Step 4.4: Comment tests (`tests/comment.rs`)
-
-- `add_comment_creates_chain`
-- `add_second_comment`
-- `reply_threading`
-- `list_comments_chronological`
-- `list_thread`
-- `resolve_sets_trailer`
-- `edit_sets_replaces`
-- `anchor_object_with_range`
-- `anchor_commit_range`
-
 **Verify**: `cargo test -p git-forge`
 
----
-
-## Phase 5 — MCP Server (Read Tools)
-
-### Step 5.1: ForgeServer gets repo path
-
-**File**: `crates/forge-mcp/src/server.rs`
-
-Add `repo_path: PathBuf` to `ForgeServer`.
-Discover via `git2::Repository::discover(".")` in `new()`.
-Add `fn open_repo(&self) -> anyhow::Result<Repository>`.
-
-### Step 5.2: Tool handlers
+### Step 3.3: MCP read tools — reviews and review comments
 
 **File**: `crates/forge-mcp/src/server.rs`
 
 Add to `#[tool_router] impl ForgeServer`:
 
-- `list_issues(state: Option<String>) -> String` — JSON array
-- `get_issue(ref: String) -> String` — accepts display ID or OID prefix
 - `list_reviews(state: Option<String>) -> String`
 - `get_review(ref: String) -> String` — accepts display ID or OID prefix
-- `list_issue_comments(ref: String) -> String`
 - `list_review_comments(ref: String) -> String`
-
-Each opens repo, calls git-forge library, serializes via `serde_json::to_string_pretty`.
 
 **Verify**: `cargo check -p forge-mcp`
 
----
-
-## Phase 6 — CLI
-
-### Step 6.1: CLI structure
+### Step 3.4: CLI — review commands
 
 **File**: `crates/git-forge/src/main.rs`
 
 ```text
-forge issue {new, show, list, edit, close, reopen, label, assign}
 forge review {new, show, list, edit, close, merge}
-forge comment {add, reply, resolve, list}
-forge sync
 ```
 
-Each command opens `Repository::discover(".")` and delegates to library functions.
-Output to stdout.
+Extend `forge comment` commands to accept `--review <ref>` in addition to `--issue <ref>`.
 
-Add `pub mod cli;` to `lib.rs` with the clap `Subcommand` enums in `src/cli.rs`.
+**Verify**: `cargo build -p git-forge`
 
-**Verify**: `cargo build -p git-forge` and `./target/debug/forge --help`
-
----
-
-## Phase 7 — GitHub Import (`forge-github` crate)
-
-Imports GitHub issues, pull requests, and comments into the forge store as first-class forge entities.
-The `forge-github` crate is a pure write-side adapter: it reads from the GitHub API and writes to forge refs.
-The existing MCP tools (Phase 5) and CLI (Phase 6) read those refs without modification.
-
-### Step 7.1: Config
-
-**File**: `crates/forge-github/src/config.rs`
-
-**Types**:
-
-- `GitHubSyncConfig { owner: String, repo: String, sigil: String, token: Option<String> }`
-  - `sigil` defaults to `"GH"` when absent from `refs/forge/config`
-  - `token` falls back to `GITHUB_TOKEN` env var if `None`
-
-**`refs/forge/config` tree layout** — tree of trees, each value is a plain UTF-8 blob:
-
-```text
-refs/forge/config → commit → tree
-  sync/
-    github/
-      <owner>/
-        <repo>/
-          sigil   → blob "GH"
-```
-
-**Functions**:
-
-- `read_github_config(repo: &Repository, owner: &str, repo_name: &str) -> Result<GitHubSyncConfig>` — navigates `sync/github/<owner>/<repo_name>/sigil` blob in `refs/forge/config` tree, fills defaults if absent
-- `write_github_config(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<()>` — writes blobs back into the tree, creates new commit on `refs/forge/config`
-
-### Step 7.2: Sync state ref
-
-**File**: `crates/forge-github/src/state.rs`
-
-Tracks which GitHub entities have been imported.
-
-```text
-refs/forge/sync/github/<owner>/<repo> → commit → tree
-  issues/<github_number>   → blob "<forge_oid>"
-  reviews/<github_number>  → blob "<forge_oid>"
-```
-
-`<github_number>` is the decimal string of the GitHub issue/PR number.
-This ref is written locally by `forge-github`; it is never pushed to the forge remote.
-
-**Functions**:
-
-- `sync_ref_name(owner: &str, repo: &str) -> String` — `"refs/forge/sync/github/<owner>/<repo>"`
-- `load_sync_state(repo: &Repository, owner: &str, repo_name: &str) -> Result<HashMap<String, String>>` — returns `"issues/<n>"` → OID map
-- `save_sync_state(repo: &Repository, owner: &str, repo_name: &str, state: &HashMap<String, String>) -> Result<()>` — writes new commit to sync ref
-- `lookup_imported(state: &HashMap<String, String>, kind: &str, github_number: u64) -> Option<&str>` — key is `"issues/<n>"` or `"reviews/<n>"`
-
-### Step 7.3: GitHub client types
+### Step 3.5: GitHub client — pull requests and review comments
 
 **File**: `crates/forge-github/src/client.rs`
 
-Thin wrapper over `octocrab` to page through all results.
+Add types:
 
-**Types** (serde structs mirroring the GitHub REST API response fields used):
-
-- `GhIssue { number: u64, title: String, body: Option<String>, state: String, labels: Vec<GhLabel>, assignees: Vec<GhUser>, user: GhUser, created_at: String, pull_request: Option<()> }`
-  - `pull_request` field presence distinguishes PRs from issues in the list API
 - `GhPull { number: u64, title: String, body: Option<String>, state: String, merged: bool, base: GhRef, head: GhRef, user: GhUser, created_at: String }`
-- `GhIssueComment { id: u64, body: Option<String>, user: GhUser, created_at: String }`
 - `GhReviewComment { id: u64, body: Option<String>, user: GhUser, commit_id: String, path: Option<String>, line: Option<u32>, created_at: String }`
-- `GhLabel { name: String }`
-- `GhUser { login: String }`
 - `GhRef { ref_field: String }` — `#[serde(rename = "ref")]`
 
-**Functions** (all `async`):
+Add functions (all `async`):
 
-- `fetch_issues(client: &Octocrab, owner: &str, repo: &str) -> Result<Vec<GhIssue>>` — pages through `/repos/{owner}/{repo}/issues?state=all&filter=all`, excludes entries where `pull_request` is present
 - `fetch_pulls(client: &Octocrab, owner: &str, repo: &str) -> Result<Vec<GhPull>>` — pages through `/repos/{owner}/{repo}/pulls?state=all`
-- `fetch_issue_comments(client: &Octocrab, owner: &str, repo: &str, number: u64) -> Result<Vec<GhIssueComment>>`
 - `fetch_review_comments(client: &Octocrab, owner: &str, repo: &str, number: u64) -> Result<Vec<GhReviewComment>>`
-- `make_client(token: Option<&str>) -> Result<Octocrab>` — builds octocrab instance; if token is None, checks `GITHUB_TOKEN` env var; returns error if neither present
+- `create_github_pull(client: &Octocrab, owner: &str, repo: &str, title: &str, body: &str, head: &str, base: &str) -> Result<u64>` — POST, returns PR number
+- `update_github_pull(client: &Octocrab, owner: &str, repo: &str, number: u64, title: Option<&str>, body: Option<&str>, state: Option<&str>) -> Result<()>` — PATCH
+- `create_github_review_comment(client: &Octocrab, owner: &str, repo: &str, number: u64, body: &str, commit_id: &str, path: &str, line: u32) -> Result<u64>` — POST, returns comment ID
 
-### Step 7.4: Import functions
+### Step 3.6: GitHub import — reviews and review comments
 
 **File**: `crates/forge-github/src/import.rs`
 
-**Types**:
-
-- `ImportReport { imported: usize, skipped: usize, failed: usize }`
-  - `skipped` = already present in sync state
-  - `failed` = API or write error (logged, not fatal)
-
-**Mapping** (GitHub → forge):
+**Additional mapping** (GitHub → forge, reviews):
 
 | GitHub field | Forge field | Notes |
 |---|---|---|
 | `title` | `title` | direct |
-| `body` | `body` | `None` → empty string |
-| `state` (+ `merged`) | `state` | PR: `merged=true` → `"merged"`, else map `state` |
-| `labels[].name` | `labels` | direct |
-| `assignees[].login` | `assignees` | GitHub login as contributor ID |
-| `user.login` | commit author name | used as git signature name in ledger commit |
+| `body` | `description` | `None` → empty string |
+| `state` (+ `merged`) | `state` | `merged=true` → `"merged"`, else map `state` |
+| `user.login` | commit author name | git signature |
 | `created_at` | commit author timestamp | RFC 3339 → git time |
-| `base.ref` | `meta/ref` + `meta/target/head` | review only; ref stored for refresh, HEAD commit resolved and pinned in `objects/` |
-| issue `number` | display ID | stored as `"<sigil><number>"`, e.g. `"GH1"` |
+| `base.ref` | `meta/ref` + `meta/target/head` | ref stored for refresh, HEAD commit resolved and pinned in `objects/` |
+| PR `number` | display ID alias | `"<sigil><number>"` in review index |
 
-For the git signature on imported commits, use `(user.login, "<login>@github.invalid")` so authorship is preserved without exposing real emails.
-The commit timestamp should use `created_at` from the GitHub payload, not the current time.
+For the git signature on imported commits, use `(user.login, "<login>@github.invalid")`.
 
 **Functions**:
 
-- `import_issues(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<ImportReport>` — async
-  1. Build octocrab client from `cfg.token`
-  2. Load sync state
-  3. Fetch all issues (excluding PRs)
-  4. For each: if `"issues/<n>"` in sync state → skip; else call `git_forge::issue::create_issue`, write display ID `"<sigil><n>"` to index immediately (no "pending"), update sync state
-  5. Save sync state
-- `import_reviews(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<ImportReport>` — async; same flow using `fetch_pulls` and `git_forge::review::create_review`; maps `base.ref` → `source_ref`, resolves `head.sha` → `ReviewTarget { head, base: None }`; pins the head commit in `objects/`
-- `import_issue_comments(repo: &Repository, cfg: &GitHubSyncConfig, github_number: u64) -> Result<ImportReport>` — async; fetches issue comments, calls `git_forge::comment::add_comment` per comment, skips if chain entry already exists (check by `GhIssueComment.id` stored as trailer `Github-Id: <id>`)
-- `import_review_comments(repo: &Repository, cfg: &GitHubSyncConfig, github_number: u64) -> Result<ImportReport>` — async; maps `GhReviewComment.commit_id` + `line` to `Anchor::Object { oid: commit_id, range: Some("<line>-<line>") }`, calls `add_comment`
-- `import_all(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<ImportReport>` — calls `import_issues` then `import_reviews`, then imports comments for each
+- `import_reviews(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport>` — async; same flow as `import_issues` using `fetch_pulls` and `git_forge::review::create_review`; maps `base.ref` → `source_ref`, resolves `head.sha` → `ReviewTarget { head, base: None }`; pins the head commit in `objects/`
+- `import_review_comments(repo: &Repository, cfg: &GitHubSyncConfig, github_number: u64) -> Result<SyncReport>` — async; maps `GhReviewComment.commit_id` + `line` to `Anchor::Object { oid: commit_id, range: Some("<line>-<line>") }`, calls `add_comment`; writes `comments/<github_comment_id> → <chain_oid>` to sync state
+- `import_all(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport>` — calls `import_issues` then `import_reviews`, then imports comments for each
 
 **Github-Id trailer**: add `Github-Id: <id>` to comment commit messages so re-runs can detect already-imported comments without scanning the whole chain.
 
-### Step 7.5: CLI subcommand
+### Step 3.7: GitHub export — reviews and review comments
 
-**File**: `crates/git-forge/src/cli.rs` (or `crates/forge-github/src/cli.rs` if kept separate)
+**File**: `crates/forge-github/src/export.rs`
 
-```text
-forge github import --owner <owner> --repo <repo> [--token <token>] [--sigil <sigil>]
-forge github import --owner <owner> --repo <repo> --issues-only
-forge github import --owner <owner> --repo <repo> --reviews-only
-```
+- `export_review(repo: &Repository, cfg: &GitHubSyncConfig, forge_oid: &str) -> Result<u64>` — async
+  1. Check sync state: if already exported → return GitHub number
+  2. Read review from `refs/forge/review/<forge_oid>`
+  3. Resolve `source_ref` to get head/base branch names for the PR
+  4. Call `create_github_pull(client, owner, repo, title, body, head_ref, base_ref)`
+  5. Write `reviews/<n> → <forge_oid>` to sync state
+  6. Write `<sigil><n>` alias to review index
+  7. Return `n`
 
-Opens `Repository::discover(".")`, builds `GitHubSyncConfig`, calls `import_all` (or targeted variant).
-Prints a summary line: `Imported N issues, M reviews (K skipped).`
+- `export_pending_reviews(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport>` — async; scans review index for pending entries
 
-**Verify**: `cargo build -p forge-github && cargo check --workspace`
+- `export_review_comments(repo: &Repository, cfg: &GitHubSyncConfig, forge_review_oid: &str) -> Result<SyncReport>` — async; same pattern as issue comment export but uses `create_github_review_comment` with anchor data (commit, path, line)
 
-### Step 7.6: Tests
+- `export_all(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport>` — calls `export_pending_issues` + `export_pending_reviews` + comments for all synced entities
 
-**File**: `crates/forge-github/src/tests/`
+### Step 3.8: forge-server — full sync
 
-Tests use a real in-memory `TempDir` git repo (same `test_repo()` helper pattern as Phase 4) but mock the GitHub API responses directly — no live network calls.
-Use `octocrab`'s mock support or build a `MockGitHub` struct that implements the same interface as the `client.rs` free functions (pass them as function pointers or build a thin trait just for testing — keep it minimal).
+**File**: `crates/forge-server/src/main.rs`
 
-- `import_single_issue_creates_ref` — verify `refs/forge/issue/<oid>` exists and display ID `"GH1"` resolves
-- `import_skips_already_imported` — run import twice, second run produces `skipped = 1`
+Extend the poll loop to cover reviews and review comments.
+The full sync cycle is now:
+
+1. Import: `import_all` (issues + reviews + all comments)
+2. Export: `export_all` (pending issues + pending reviews + new comments)
+3. Assign display IDs for remaining pending entities
+
+### Step 3.9: forge-github tests — reviews
+
+- `import_single_pr_creates_ref` — verify `refs/forge/review/<oid>` exists and `"GH1"` resolves in review index
 - `import_issue_and_pr_no_collision` — issue `#GH1` and review `#GH1` coexist in their respective indexes
-- `import_comments_adds_chain` — after importing a PR, import its comments and verify chain
-- `sigil_configurable` — set `sigil = "ACME"`, verify display ID is `"ACME1"`
+- `import_review_comments_adds_chain` — import PR comments with anchors, verify chain entries
 - `pr_merged_state_maps_correctly` — `merged: true` → review state `"merged"`
+- `export_review_creates_github_pr` — verify sync state and review index alias
+- `export_review_comments` — verify sync state tracks comment IDs
+- `roundtrip_reviews_no_duplicates` — export then import, no duplicates
 
 **Verify**: `cargo test -p forge-github`
 
@@ -681,15 +942,26 @@ Use `octocrab`'s mock support or build a `MockGitHub` struct that implements the
 
 ## Commit Strategy
 
-One commit per phase or logical unit:
+One commit per step or logical unit within each phase:
 
-1. `feat: add git-data dependencies` (Phase 0)
-2. `feat: add issue CRUD backed by git-ledger` (Phase 1 + tests)
-3. `feat: add review CRUD backed by git-ledger` (Phase 2 + tests)
-4. `feat: add comment operations backed by git-chain` (Phase 3 + tests)
-5. `feat: add MCP read tools for issues, reviews, and comments` (Phase 5)
-6. `feat: add forge CLI for issues, reviews, and comments` (Phase 6)
-7. `feat: add forge-github crate for importing issues and PRs` (Phase 7)
+1. `feat: add workspace dependencies` (Phase 0)
+2. `feat: add issue CRUD backed by git-ledger` (Steps 1.1–1.2)
+3. `test: add issue tests` (Step 1.3)
+4. `feat: add MCP read tools for issues` (Step 1.4)
+5. `feat: add CLI issue commands and forge sync` (Step 1.5)
+6. `feat: add forge-github config, sync state, and client` (Step 1.6)
+7. `feat: add GitHub import for issues` (Step 1.7)
+8. `feat: add GitHub export for issues` (Step 1.8)
+9. `feat: add forge-server with issue sync` (Step 1.9)
+10. `test: add forge-github issue tests` (Step 1.10)
+11. `feat: add comment operations backed by git-chain` (Steps 2.1–2.2)
+12. `feat: add MCP and CLI for issue comments` (Steps 2.3–2.4)
+13. `feat: add GitHub import/export for issue comments` (Steps 2.5–2.6)
+14. `feat: extend forge-server with comment sync` (Steps 2.7–2.8)
+15. `feat: add review CRUD backed by git-ledger` (Steps 3.1–3.2)
+16. `feat: add MCP and CLI for reviews` (Steps 3.3–3.4)
+17. `feat: add GitHub import/export for reviews and review comments` (Steps 3.5–3.7)
+18. `feat: extend forge-server with full sync` (Steps 3.8–3.9)
 
 ## Verification
 
@@ -698,4 +970,7 @@ After all phases:
 1. `cargo test --workspace` — all tests pass
 2. `cargo clippy --workspace` — no warnings
 3. Manual: create a test repo, `forge issue new "test"`, `forge issue list`, verify refs exist with `git for-each-ref refs/forge/`
-4. Manual: `GITHUB_TOKEN=... forge github import --owner <o> --repo <r>`, then `forge issue list` to verify `#GH1`, `#GH2` etc. resolve correctly
+4. Manual: `forge comment add --issue #1 "first comment"`, verify chain ref
+5. Manual: start `forge-server`, create a new issue with `forge issue new`, verify it appears on GitHub within one poll cycle
+6. Manual: create an issue on GitHub, wait for poll, verify `forge issue list` shows the `#GH<n>` alias
+7. Manual: `forge-server --once` as a one-shot sync fallback
