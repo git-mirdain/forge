@@ -1,5 +1,6 @@
 //! Issue entity CRUD backed by `git-ledger`.
 
+use facet::Facet;
 use git_ledger::{IdStrategy, Ledger, LedgerEntry, Mutation};
 use serde::Serialize;
 
@@ -8,7 +9,9 @@ use crate::refs::{ISSUE_INDEX, ISSUE_PREFIX};
 use crate::{Error, Result, Store};
 
 /// The open/closed lifecycle state of an issue.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Facet, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[repr(u8)]
 #[serde(rename_all = "lowercase")]
 pub enum IssueState {
     /// Issue is open and active.
@@ -26,8 +29,12 @@ impl IssueState {
             IssueState::Closed => "closed",
         }
     }
+}
 
-    fn parse(s: &str) -> Result<Self> {
+impl std::str::FromStr for IssueState {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
         match s {
             "open" => Ok(IssueState::Open),
             "closed" => Ok(IssueState::Closed),
@@ -37,7 +44,7 @@ impl IssueState {
 }
 
 /// A forge issue backed by a git-ledger entity ref.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Facet)]
 pub struct Issue {
     /// Permanent identity: the OID of the initial commit on the entity ref.
     pub oid: String,
@@ -66,7 +73,7 @@ fn issue_from_entry(entry: &LedgerEntry, display_id: Option<String>) -> Result<I
         let text = || String::from_utf8_lossy(value).into_owned();
         match name.as_str() {
             "title" => title = text(),
-            "state" => state = IssueState::parse(&text())?,
+            "state" => state = text().parse()?,
             "body" => body = text(),
             n if n.starts_with("labels/") => {
                 labels.push(n["labels/".len()..].to_string());

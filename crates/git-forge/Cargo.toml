@@ -9,16 +9,23 @@ description = "Local-first infrastructure for Git forges."
 [[bin]]
 name = "forge"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli", "exe"]
+exe = ["dep:facet-json"]
+cli = ["exe", "dep:clap", "dep:clap_mangen"]
 
 [dependencies]
-clap = { workspace = true }
-clap_mangen = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 git2 = { workspace = true }
 git-ledger = { workspace = true }
 git-chain = { workspace = true }
+facet = { workspace = true }
+facet-json = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+clap_mangen = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

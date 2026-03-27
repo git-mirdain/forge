@@ -4,6 +4,12 @@ pub mod error;
 pub mod issue;
 pub mod refs;
 
+#[cfg(feature = "cli")]
+pub mod cli;
+
+#[cfg(feature = "exe")]
+pub mod exe;
+
 mod index;
 
 pub use error::{Error, Result};
