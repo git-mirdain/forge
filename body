@@ -1,0 +1,1 @@
+`comment show -c <full-oid>` without `-t` defaults to searching `commit/<HEAD>` and fails if the comment belongs to a different target. When a specific OID is given, it should be found regardless of the default target.
