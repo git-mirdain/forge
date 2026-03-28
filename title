@@ -1,0 +1,1 @@
+panic in `issue list`: byte slice index out of bounds when oid < 8 chars

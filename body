@@ -1,0 +1,26 @@
+## Bug
+
+`forge issue list` (and `forge issue show`) panic when an issue's `oid` field is shorter than 8 characters.
+
+## Backtrace
+
+```
+thread 'main' panicked at crates/git-forge/src/exe.rs:243:66:
+byte index 8 is out of bounds of `1`
+```
+
+## Root cause
+
+`print_issue_list` (and `print_issue`) fall back to `&issue.oid[..8]` when `display_id` is `None`:
+
+```rust
+let id = issue.display_id.as_deref().unwrap_or(&issue.oid[..8]);
+```
+
+This is an unchecked byte-slice index on a `String`. If `oid` is shorter than 8 bytes, Rust panics at runtime.
+
+## Fix
+
+Replace the hard-coded `[..8]` with a safe alternative such as `issue.oid.get(..8).unwrap_or(&issue.oid)`.
+
+Assisted-by: Claude Code (Claude Sonnet 4.6)
