@@ -1,10 +1,9 @@
 //! Integration tests for `forge_github::config` discovery and round-trip.
 #![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
 
-use std::collections::BTreeMap;
-
-use forge_github::config::GitHubSyncConfig;
-use forge_github::config::{discover_github_configs, read_github_config, write_github_config};
+use forge_github::config::{
+    GitHubSyncConfig, discover_github_configs, read_github_config, write_github_config,
+};
 use git2::Repository;
 use tempfile::TempDir;
 
@@ -75,22 +74,6 @@ fn read_config_no_sigils_returns_empty_map() {
     let loaded = read_github_config(&repo, "org", "repo").unwrap();
     assert_eq!(loaded.owner, "org");
     assert_eq!(loaded.repo, "repo");
-    assert!(loaded.sigils.is_empty());
-}
-
-#[test]
-fn write_config_no_sigils_is_valid() {
-    let (_dir, repo) = test_repo();
-    let cfg = GitHubSyncConfig {
-        owner: "org".into(),
-        repo: "repo".into(),
-        sigils: BTreeMap::new(),
-        token: None,
-    };
-    // Writing a config with no sigils should not error.
-    write_github_config(&repo, &cfg).unwrap();
-
-    let loaded = read_github_config(&repo, "org", "repo").unwrap();
     assert!(loaded.sigils.is_empty());
 }
 

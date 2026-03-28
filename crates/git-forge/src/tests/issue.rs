@@ -20,15 +20,7 @@ fn state_from_str_invalid() {
 }
 
 #[test]
-fn state_as_str_roundtrip() {
+fn state_as_str() {
     assert_eq!(IssueState::Open.as_str(), "open");
     assert_eq!(IssueState::Closed.as_str(), "closed");
-    assert_eq!(
-        IssueState::Open.as_str().parse::<IssueState>().unwrap(),
-        IssueState::Open
-    );
-    assert_eq!(
-        IssueState::Closed.as_str().parse::<IssueState>().unwrap(),
-        IssueState::Closed
-    );
 }

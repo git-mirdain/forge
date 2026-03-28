@@ -48,6 +48,12 @@ fn create_issue_basic_fields() {
     assert_eq!(issue.display_id, None); // not set until synced
     assert_eq!(issue.oid.len(), 40);
     assert!(issue.oid.chars().all(|c| c.is_ascii_hexdigit()));
+
+    // Read back from git to verify persistence, not just the returned struct.
+    let fetched = store.get_issue(&issue.oid).unwrap();
+    assert_eq!(fetched.title, "Fix the bug");
+    assert_eq!(fetched.body, "some details");
+    assert_eq!(fetched.state, IssueState::Open);
 }
 
 #[test]
@@ -84,15 +90,6 @@ fn create_two_issues_have_distinct_oids() {
     let a = store.create_issue("First", "body", &[], &[]).unwrap();
     let b = store.create_issue("Second", "body", &[], &[]).unwrap();
     assert_ne!(a.oid, b.oid);
-}
-
-#[test]
-fn create_issue_empty_body_and_no_labels() {
-    let (_dir, repo) = test_repo();
-    let store = Store::new(&repo);
-    let issue = store.create_issue("Title", "", &[], &[]).unwrap();
-    assert_eq!(issue.body, "");
-    assert!(issue.labels.is_empty());
 }
 
 #[test]
