@@ -615,9 +615,52 @@ fn print_issue(issue: &Issue, json: bool) {
     }
 }
 
+/// Extract `(sigil, number)` from a display ID like `"GH#4"` → `("GH#", 4)`.
+fn parse_display_id(id: &str) -> (&str, u64) {
+    let num_start = id.find(|c: char| c.is_ascii_digit()).unwrap_or(id.len());
+    let (prefix, num_str) = id.split_at(num_start);
+    let num = num_str.parse().unwrap_or(u64::MAX);
+    (prefix, num)
+}
+
 fn print_issue_list(issues: &[Issue]) {
-    for issue in issues {
-        let id = issue.display_id.as_deref().unwrap_or(&issue.oid);
-        println!("#{id:<10}  {}  [{}]", issue.title, issue.state.as_str());
+    use comfy_table::{Cell, Table};
+
+    let mut sorted: Vec<&Issue> = issues.iter().collect();
+    sorted.sort_by(|a, b| {
+        let (sa, na) = parse_display_id(a.display_id.as_deref().unwrap_or(""));
+        let (sb, nb) = parse_display_id(b.display_id.as_deref().unwrap_or(""));
+        sa.cmp(sb).then(na.cmp(&nb))
+    });
+
+    // Determine zero-pad width per sigil prefix.
+    let max_num: u64 = sorted
+        .iter()
+        .filter_map(|i| i.display_id.as_deref())
+        .map(|id| parse_display_id(id).1)
+        .max()
+        .unwrap_or(0);
+    let pad = max_num.max(1).ilog10() as usize + 1;
+
+    let mut table = Table::new();
+    table.load_preset(comfy_table::presets::NOTHING);
+    table.set_header(vec![
+        Cell::new("ID"),
+        Cell::new("Title"),
+        Cell::new("State"),
+    ]);
+    for issue in sorted {
+        let id_str = if let Some(id) = issue.display_id.as_deref() {
+            let (prefix, num) = parse_display_id(id);
+            format!("{prefix}{num:0>pad$}")
+        } else {
+            issue.oid[..8].to_string()
+        };
+        table.add_row(vec![
+            Cell::new(format!("#{id_str}")),
+            Cell::new(&issue.title),
+            Cell::new(issue.state.as_str()),
+        ]);
     }
+    println!("{table}");
 }

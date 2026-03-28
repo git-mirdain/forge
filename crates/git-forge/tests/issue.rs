@@ -631,3 +631,17 @@ fn write_display_id_multiple_ids_coexist() {
     assert_eq!(store.get_issue("GH#1").unwrap().oid, created.oid);
     assert_eq!(store.get_issue("GL#1").unwrap().oid, created.oid);
 }
+
+#[test]
+fn zero_padded_display_id_resolves() {
+    let (_dir, repo) = test_repo();
+    let store = Store::new(&repo);
+    let created = store.create_issue("Title", "", &[], &[]).unwrap();
+
+    store
+        .write_display_id(ISSUE_INDEX, "GH#4", &created.oid)
+        .unwrap();
+
+    let fetched = store.get_issue("GH#04").unwrap();
+    assert_eq!(fetched.oid, created.oid);
+}

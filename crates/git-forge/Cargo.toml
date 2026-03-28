@@ -14,7 +14,7 @@ required-features = ["cli"]
 [features]
 default = ["cli", "exe"]
 exe = ["dep:facet-json"]
-cli = ["exe", "dep:figue", "dep:inquire"]
+cli = ["exe", "dep:figue", "dep:inquire", "dep:comfy-table"]
 
 [dependencies]
 thiserror = { workspace = true }
@@ -26,6 +26,7 @@ facet = { workspace = true }
 facet-json = { workspace = true, optional = true }
 figue = { workspace = true, optional = true }
 inquire = { workspace = true, optional = true }
+comfy-table = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

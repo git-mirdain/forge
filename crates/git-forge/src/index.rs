@@ -83,12 +83,28 @@ pub(crate) fn resolve_oid(
     let is_hex = |s: &str| s.chars().all(|c| c.is_ascii_hexdigit());
 
     // Index alias lookup (sigil-prefixed ID, user alias, etc.)
-    if let Some(index) = index
-        && let Some(val) = index.get(oid_or_id)
-        && val.len() == 40
-        && is_hex(val)
-    {
-        return Ok(val.clone());
+    if let Some(index) = index {
+        if let Some(val) = index.get(oid_or_id)
+            && val.len() == 40
+            && is_hex(val)
+        {
+            return Ok(val.clone());
+        }
+
+        // Retry with leading zeros stripped from the numeric suffix,
+        // so `GH#04` resolves to the entry stored as `GH#4`.
+        let num_start = oid_or_id.find(|c: char| c.is_ascii_digit());
+        if let Some(pos) = num_start {
+            let (prefix, num) = oid_or_id.split_at(pos);
+            let stripped = format!("{prefix}{}", num.trim_start_matches('0'));
+            if stripped != oid_or_id
+                && let Some(val) = index.get(&stripped)
+                && val.len() == 40
+                && is_hex(val)
+            {
+                return Ok(val.clone());
+            }
+        }
     }
 
     // Hex string → match against known OIDs
