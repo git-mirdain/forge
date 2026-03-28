@@ -53,12 +53,12 @@ fn read_config_blob_nonexistent_path_returns_none() {
 #[test]
 fn write_then_read_roundtrip() {
     let (_dir, repo) = test_repo();
-    write_config_blob(&repo, "provider/github/owner/repo/token", "secret123").unwrap();
+    write_config_blob(&repo, "provider/github/owner/repo/key", "some-value").unwrap();
 
-    let val = read_config_blob(&repo, "provider/github/owner/repo/token")
+    let val = read_config_blob(&repo, "provider/github/owner/repo/key")
         .unwrap()
         .expect("value");
-    assert_eq!(val, "secret123");
+    assert_eq!(val, "some-value");
 }
 
 #[test]
