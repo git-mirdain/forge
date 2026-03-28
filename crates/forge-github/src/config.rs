@@ -85,12 +85,68 @@ pub fn read_github_config(
 
 /// Write `cfg` back to `refs/forge/config`, creating or updating the commit.
 ///
+/// The sigil subtree is rebuilt from scratch so that sigils removed from `cfg`
+/// are also removed from the config ref.
+///
 /// # Errors
 /// Returns an error if a git operation fails.
 pub fn write_github_config(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<()> {
-    let prefix = format!("provider/github/{}/{}", cfg.owner, cfg.repo);
-    for (entity, sigil) in &cfg.sigils {
-        refs::write_config_blob(repo, &format!("{prefix}/sigil/{entity}"), sigil)?;
+    let parent = match repo.find_reference(refs::CONFIG) {
+        Ok(r) => Some(r.peel_to_commit()?),
+        Err(e) if e.code() == ErrorCode::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let parent_tree = parent.as_ref().map(git2::Commit::tree).transpose()?;
+
+    // Build the sigil subtree from scratch — drops stale entries.
+    let sigil_tree_oid = {
+        let mut builder = repo.treebuilder(None)?;
+        for (entity, sigil) in &cfg.sigils {
+            let blob_oid = repo.blob(sigil.as_bytes())?;
+            builder.insert(entity, blob_oid, 0o100_644)?;
+        }
+        builder.write()?
+    };
+
+    // Insert the sigil tree at provider/github/<owner>/<repo>/sigil.
+    // This is the same walk-down/fold-up as `build_tree` but the leaf is a
+    // tree (mode 0o040_000) instead of a blob.
+    let segments: Vec<&str> = vec!["provider", "github", &cfg.owner, &cfg.repo, "sigil"];
+
+    let mut pairs: Vec<(&str, Option<git2::Oid>)> = Vec::new();
+    let mut current = parent_tree.as_ref().map(git2::Tree::id);
+    for seg in &segments {
+        pairs.push((seg, current));
+        current = current.and_then(|oid| {
+            repo.find_tree(oid)
+                .ok()?
+                .get_name(seg)
+                .filter(|e| e.kind() == Some(ObjectType::Tree))
+                .map(|e| e.id())
+        });
     }
+
+    let mut child_oid = sigil_tree_oid;
+    let mode = 0o040_000; // every level including the leaf is a tree
+    for (seg, tree_oid) in pairs.into_iter().rev() {
+        let mut builder = match tree_oid {
+            Some(oid) => repo.treebuilder(Some(&repo.find_tree(oid)?))?,
+            None => repo.treebuilder(None)?,
+        };
+        builder.insert(seg, child_oid, mode)?;
+        child_oid = builder.write()?;
+    }
+
+    let root = repo.find_tree(child_oid)?;
+    let sig = repo.signature()?;
+    let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+    repo.commit(
+        Some(refs::CONFIG),
+        &sig,
+        &sig,
+        "forge: update config",
+        &root,
+        &parents,
+    )?;
     Ok(())
 }

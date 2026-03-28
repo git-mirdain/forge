@@ -90,6 +90,22 @@ fn write_config_overwrites_sigil() {
     assert_eq!(loaded.sigils.get("issue").map(String::as_str), Some("NEW#"));
 }
 
+#[test]
+fn write_config_removes_stale_sigil() {
+    let (_dir, repo) = test_repo();
+    let cfg1 = config_with_sigils("org", "repo", &[("issue", "GH#"), ("review", "PR#")]);
+    write_github_config(&repo, &cfg1).unwrap();
+
+    // Rewrite with only the issue sigil — review should be removed.
+    let cfg2 = config_with_sigils("org", "repo", &[("issue", "GH#")]);
+    write_github_config(&repo, &cfg2).unwrap();
+
+    let loaded = read_github_config(&repo, "org", "repo").unwrap();
+    assert_eq!(loaded.sigils.len(), 1);
+    assert_eq!(loaded.sigils.get("issue").map(String::as_str), Some("GH#"));
+    assert!(!loaded.sigils.contains_key("review"));
+}
+
 // ---------------------------------------------------------------------------
 // discover_github_configs
 // ---------------------------------------------------------------------------
