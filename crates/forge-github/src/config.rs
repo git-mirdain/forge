@@ -14,7 +14,7 @@ pub struct GitHubSyncConfig {
     pub repo: String,
     /// Entity kind → sigil prefix (e.g. `"issue"` → `"GH#"`).
     pub sigils: BTreeMap<String, String>,
-    /// Personal access token; falls back to `GITHUB_TOKEN` env var when `None`.
+    /// Personal access token; falls back to `GH_TOKEN` env var when `None`.
     pub token: Option<String>,
 }
 

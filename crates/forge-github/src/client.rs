@@ -64,16 +64,15 @@ pub struct GhUser {
 
 /// Build an `Octocrab` client.
 ///
-/// Uses `token` if provided; otherwise falls back to the `GITHUB_TOKEN` env var.
+/// Uses `token` if provided; otherwise falls back to the `GH_TOKEN` env var.
 ///
 /// # Errors
-/// Returns an error if `token` is `None` and `GITHUB_TOKEN` is not set, or if
+/// Returns an error if `token` is `None` and `GH_TOKEN` is not set, or if
 /// the octocrab builder fails.
 pub fn make_client(token: Option<&str>) -> Result<Octocrab> {
     let tok = match token {
         Some(t) => t.to_string(),
-        None => std::env::var("GITHUB_TOKEN")
-            .context("no token provided and GITHUB_TOKEN is not set")?,
+        None => std::env::var("GH_TOKEN").context("no token provided and GH_TOKEN is not set")?,
     };
     let client = Octocrab::builder()
         .personal_token(tok)

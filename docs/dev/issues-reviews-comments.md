@@ -426,7 +426,7 @@ Shared infrastructure for both import and export directions.
 
 - `GitHubSyncConfig { owner: String, repo: String, sigil: String, token: Option<String> }`
   - `sigil` defaults to `"GH"` when absent from `refs/forge/config`
-  - `token` falls back to `GITHUB_TOKEN` env var if `None`
+  - `token` falls back to `GH_TOKEN` env var if `None`
 
 **`refs/forge/config` tree layout** — tree of trees, each value is a plain UTF-8 blob:
 
@@ -492,7 +492,7 @@ Pull request types (`GhPull`, `GhReviewComment`, `GhRef`) are added in Phase 3.
 
 **Functions** (all `async`):
 
-- `make_client(token: Option<&str>) -> Result<Octocrab>` — builds octocrab instance; if token is None, checks `GITHUB_TOKEN` env var; returns error if neither present
+- `make_client(token: Option<&str>) -> Result<Octocrab>` — builds octocrab instance; if token is None, checks `GH_TOKEN` env var; returns error if neither present
 - `fetch_issues(client: &Octocrab, owner: &str, repo: &str) -> Result<Vec<GhIssue>>` — pages through `/repos/{owner}/{repo}/issues?state=all&filter=all`, excludes entries where `pull_request` is present
 - `fetch_issue_comments(client: &Octocrab, owner: &str, repo: &str, number: u64) -> Result<Vec<GhIssueComment>>`
 - `create_github_issue(client: &Octocrab, owner: &str, repo: &str, title: &str, body: &str, labels: &[String], assignees: &[String]) -> Result<u64>` — POST, returns issue number
