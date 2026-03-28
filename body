@@ -1,0 +1,1 @@
+`comment new issue/N -b ""` succeeds, but the resulting comment cannot be found by `comment show -c <oid>`. Either reject empty bodies or handle them gracefully in display.
