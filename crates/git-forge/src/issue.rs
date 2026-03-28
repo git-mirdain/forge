@@ -137,6 +137,7 @@ impl Store<'_> {
             &IdStrategy::CommitOid,
             &fields,
             "create issue",
+            None,
         )?;
 
         index_upsert(self.repo, ISSUE_INDEX, &[(&entry.id, "pending")])?;
@@ -144,6 +145,75 @@ impl Store<'_> {
         Ok(Issue {
             oid: entry.id,
             display_id: None,
+            title: title.to_string(),
+            state: IssueState::Open,
+            body: body.to_string(),
+            labels: labels
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            assignees: assignees
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+        })
+    }
+
+    /// Create an issue with a custom git author, used when importing from an external source.
+    ///
+    /// `display_id` is written to the index immediately (no "pending" stage).
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_issue_imported(
+        &self,
+        title: &str,
+        body: &str,
+        labels: &[&str],
+        assignees: &[&str],
+        display_id: &str,
+        author: &git2::Signature<'_>,
+        source: &str,
+    ) -> Result<Issue> {
+        let mut fields: Vec<(&str, &[u8])> = vec![
+            ("title", title.as_bytes()),
+            ("state", b"open"),
+            ("body", body.as_bytes()),
+            ("source/url", source.as_bytes()),
+        ];
+
+        let label_paths: Vec<String> = labels.iter().map(|l| format!("labels/{l}")).collect();
+        let assignee_paths: Vec<String> =
+            assignees.iter().map(|a| format!("assignees/{a}")).collect();
+        let label_fields: Vec<(&str, &[u8])> = label_paths
+            .iter()
+            .map(|p| (p.as_str(), b"" as &[u8]))
+            .collect();
+        let assignee_fields: Vec<(&str, &[u8])> = assignee_paths
+            .iter()
+            .map(|p| (p.as_str(), b"" as &[u8]))
+            .collect();
+        fields.extend(label_fields);
+        fields.extend(assignee_fields);
+
+        let entry = self.repo.create(
+            ISSUE_PREFIX,
+            &IdStrategy::CommitOid,
+            &fields,
+            "forge: create issue",
+            Some(author),
+        )?;
+
+        index_upsert(
+            self.repo,
+            ISSUE_INDEX,
+            &[(&entry.id, &entry.id), (display_id, &entry.id)],
+        )?;
+
+        Ok(Issue {
+            oid: entry.id.clone(),
+            display_id: Some(display_id.to_string()),
             title: title.to_string(),
             state: IssueState::Open,
             body: body.to_string(),

@@ -28,7 +28,7 @@ pub fn read_github_config(
     repo_name: &str,
 ) -> Result<GitHubSyncConfig> {
     let sigil = read_blob(repo, &format!("sync/github/{owner}/{repo_name}/sigil"))?
-        .unwrap_or_else(|| "GH".to_string());
+        .unwrap_or_else(|| "GH#".to_string());
     Ok(GitHubSyncConfig {
         owner: owner.to_string(),
         repo: repo_name.to_string(),
