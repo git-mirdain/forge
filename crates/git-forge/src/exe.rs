@@ -506,6 +506,7 @@ impl Executor {
 
                     let states: Vec<IssueState> = state
                         .as_deref()
+                        .filter(|s| !s.eq_ignore_ascii_case("all"))
                         .map(|s| {
                             split(s)
                                 .iter()
