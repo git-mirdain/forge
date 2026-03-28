@@ -1,0 +1,1 @@
+A previous issue disappeared — there may be a `forge sync` bug where empty issues are lost. This points to a possible bug in ref handling.
