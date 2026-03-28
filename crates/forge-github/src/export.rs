@@ -5,10 +5,10 @@ use git_forge::Store;
 use git_forge::refs::ISSUE_INDEX;
 use git2::Repository;
 
-use crate::SyncReport;
 use crate::client::{create_github_issue, make_client};
 use crate::config::GitHubSyncConfig;
 use crate::state::{load_sync_state, lookup_by_forge_oid, save_sync_state};
+use git_forge::sync::SyncReport;
 
 /// Export locally-created issues to GitHub.
 ///

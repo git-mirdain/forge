@@ -17,6 +17,51 @@ pub struct GitHubSyncConfig {
 
 const CONFIG_REF: &str = "refs/forge/config";
 
+/// Discover all GitHub sync configurations under `refs/forge/config`.
+///
+/// Walks the `sync/github/<owner>/<repo>/` subtree and returns a config for
+/// each `(owner, repo)` pair found. Returns an empty vec when the config ref
+/// does not exist.
+///
+/// # Errors
+/// Returns an error if a git operation fails.
+pub fn discover_github_configs(repo: &Repository) -> Result<Vec<GitHubSyncConfig>> {
+    let reference = match repo.find_reference(CONFIG_REF) {
+        Ok(r) => r,
+        Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let root_tree = reference.peel_to_commit()?.tree()?;
+
+    let github_entry = match root_tree.get_path(std::path::Path::new("sync/github")) {
+        Ok(e) => e,
+        Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let github_tree = repo.find_tree(github_entry.id())?;
+
+    let mut configs = Vec::new();
+    for owner_entry in &github_tree {
+        if owner_entry.kind() != Some(ObjectType::Tree) {
+            continue;
+        }
+        let Some(owner) = owner_entry.name() else {
+            continue;
+        };
+        let owner_tree = repo.find_tree(owner_entry.id())?;
+        for repo_entry in &owner_tree {
+            if repo_entry.kind() != Some(ObjectType::Tree) {
+                continue;
+            }
+            let Some(repo_name) = repo_entry.name() else {
+                continue;
+            };
+            configs.push(read_github_config(repo, owner, repo_name)?);
+        }
+    }
+    Ok(configs)
+}
+
 /// Read `GitHubSyncConfig` for the given `owner`/`repo_name` from `refs/forge/config`.
 /// Missing blobs resolve to their defaults.
 ///

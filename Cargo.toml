@@ -4,6 +4,7 @@ members = [
     "crates/git-forge",
     "crates/forge-mcp",
     "crates/forge-github",
+    "crates/forge-server",
 ]
 
 [workspace.package]

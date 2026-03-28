@@ -631,6 +631,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-server"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "forge-github",
+ "git-forge",
+ "git2",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -18,6 +18,9 @@ pub enum Error {
     /// The user cancelled an interactive prompt.
     #[error("interrupted")]
     Interrupted,
+    /// A remote sync operation failed.
+    #[error("sync: {0}")]
+    Sync(String),
 }
 
 /// Convenience result alias.
