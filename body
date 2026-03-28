@@ -1,0 +1,1 @@
+`comment new issue/999 -b "..."` succeeds and creates a ref at `refs/forge/comments/issue/999` even though issue 999 does not exist. Should validate the target exists before creating the comment.
