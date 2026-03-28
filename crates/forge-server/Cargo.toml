@@ -16,6 +16,8 @@ forge-github = { workspace = true }
 git2 = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+facet = { workspace = true }
+figue = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

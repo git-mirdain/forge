@@ -635,6 +635,8 @@ name = "forge-server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "facet",
+ "figue",
  "forge-github",
  "git-forge",
  "git2",

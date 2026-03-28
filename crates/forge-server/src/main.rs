@@ -4,13 +4,35 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
+use facet::Facet;
+use figue::{self as args, FigueBuiltins};
 use forge_github::GitHubAdapter;
 use forge_github::config::discover_github_configs;
 use git_forge::sync::RemoteSync;
 use git2::Repository;
 
+/// Forge sync daemon — watches refs and coordinates GitHub sync.
+#[derive(Facet, Debug)]
+struct Args {
+    /// Path to the git repository (default: current directory).
+    #[facet(args::named, default = PathBuf::from("."))]
+    repo: PathBuf,
+
+    /// Seconds between sync polls.
+    #[facet(args::named, default = 60u64)]
+    poll_interval: u64,
+
+    /// Run a single sync pass and exit.
+    #[facet(args::named)]
+    once: bool,
+
+    /// Built-in flags (--help, --version, --completions).
+    #[facet(flatten)]
+    builtins: FigueBuiltins,
+}
+
 fn main() -> Result<()> {
-    let args = parse_args()?;
+    let args: Args = figue::from_std_args().unwrap();
     let repo = Repository::discover(&args.repo)?;
 
     let configs = discover_github_configs(&repo)?;
@@ -57,42 +79,4 @@ async fn sync_one(repo: &Repository, adapter: &GitHubAdapter) -> Result<()> {
     );
 
     Ok(())
-}
-
-struct Args {
-    repo: PathBuf,
-    poll_interval: u64,
-    once: bool,
-}
-
-fn parse_args() -> Result<Args> {
-    let mut args = std::env::args().skip(1);
-    let mut repo = PathBuf::from(".");
-    let mut poll_interval = 60u64;
-    let mut once = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => {
-                repo = PathBuf::from(
-                    args.next()
-                        .ok_or_else(|| anyhow::anyhow!("--repo requires a value"))?,
-                );
-            }
-            "--poll-interval" => {
-                let val = args
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--poll-interval requires a value"))?;
-                poll_interval = val.parse()?;
-            }
-            "--once" => once = true,
-            other => anyhow::bail!("unknown argument: {other}"),
-        }
-    }
-
-    Ok(Args {
-        repo,
-        poll_interval,
-        once,
-    })
 }
