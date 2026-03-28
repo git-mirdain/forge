@@ -497,15 +497,26 @@ impl Executor {
                     platform,
                     id,
                 } => {
+                    let split = |s: &str| -> Vec<String> {
+                        s.split(',')
+                            .map(|v| v.trim().to_string())
+                            .filter(|v| !v.is_empty())
+                            .collect()
+                    };
+
                     let states: Vec<IssueState> = state
                         .as_deref()
                         .map(|s| {
-                            s.split(',')
-                                .map(|v| v.trim().parse())
+                            split(s)
+                                .iter()
+                                .map(|v| v.parse())
                                 .collect::<Result<Vec<_>>>()
                         })
                         .transpose()?
                         .unwrap_or_default();
+                    let platforms: Vec<String> =
+                        platform.as_deref().map(&split).unwrap_or_default();
+                    let ids: Vec<String> = id.as_deref().map(split).unwrap_or_default();
 
                     let mut issues = if states.len() == 1 {
                         self.list_issues(Some(&states[0]))?
@@ -517,21 +528,21 @@ impl Executor {
                         all
                     };
 
-                    if let Some(p) = platform {
-                        let prefixes: Vec<&str> = p.split(',').map(str::trim).collect();
+                    if !platforms.is_empty() {
                         issues.retain(|i| {
-                            i.display_id
-                                .as_deref()
-                                .is_some_and(|id| prefixes.iter().any(|pfx| id.starts_with(pfx)))
+                            i.display_id.as_deref().is_some_and(|id| {
+                                platforms.iter().any(|pfx| id.starts_with(pfx.as_str()))
+                            })
                         });
                     }
 
-                    if let Some(id_filter) = id {
-                        let needles: Vec<&str> = id_filter.split(',').map(str::trim).collect();
+                    if !ids.is_empty() {
                         issues.retain(|i| {
-                            needles.iter().any(|needle| {
-                                i.display_id.as_deref().is_some_and(|id| id == *needle)
-                                    || i.oid.starts_with(needle)
+                            ids.iter().any(|needle| {
+                                i.display_id
+                                    .as_deref()
+                                    .is_some_and(|id| id == needle.as_str())
+                                    || i.oid.starts_with(needle.as_str())
                             })
                         });
                     }
