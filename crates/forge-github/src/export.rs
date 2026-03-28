@@ -5,7 +5,7 @@ use git_forge::Store;
 use git_forge::refs::ISSUE_INDEX;
 use git2::Repository;
 
-use crate::client::{create_github_issue, make_client};
+use crate::client::GitHubClient;
 use crate::config::GitHubSyncConfig;
 use crate::state::{load_sync_state, lookup_by_forge_oid, save_sync_state};
 use git_forge::sync::SyncReport;
@@ -18,8 +18,11 @@ use git_forge::sync::SyncReport;
 ///
 /// # Errors
 /// Returns an error if the GitHub API call fails or a git operation fails.
-pub async fn export_issues(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport> {
-    let client = make_client(cfg.token.as_deref())?;
+pub async fn export_issues(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+) -> Result<SyncReport> {
     let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
 
     let store = Store::new(repo);
@@ -35,16 +38,16 @@ pub async fn export_issues(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<
         let labels: Vec<String> = issue.labels.clone();
         let assignees: Vec<String> = issue.assignees.clone();
 
-        match create_github_issue(
-            &client,
-            &cfg.owner,
-            &cfg.repo,
-            &issue.title,
-            &issue.body,
-            &labels,
-            &assignees,
-        )
-        .await
+        match client
+            .create_issue(
+                &cfg.owner,
+                &cfg.repo,
+                &issue.title,
+                &issue.body,
+                &labels,
+                &assignees,
+            )
+            .await
         {
             Ok(number) => {
                 let sigil = cfg.sigils.get("issue").map_or("GH#", String::as_str);

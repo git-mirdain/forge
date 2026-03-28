@@ -6,6 +6,7 @@ pub mod export;
 pub mod import;
 pub mod state;
 
+use client::OctocrabClient;
 use git_forge::sync::{RemoteSync, SyncReport};
 use git_forge::{Error, Result};
 use git2::Repository;
@@ -28,13 +29,17 @@ impl GitHubAdapter {
 
 impl RemoteSync for GitHubAdapter {
     async fn import_issues(&self, repo: &Repository) -> Result<SyncReport> {
-        import::import_issues(repo, &self.config)
+        let client = OctocrabClient::new(self.config.token.as_deref())
+            .map_err(|e| Error::Sync(e.to_string()))?;
+        import::import_issues(repo, &self.config, &client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }
 
     async fn export_issues(&self, repo: &Repository) -> Result<SyncReport> {
-        export::export_issues(repo, &self.config)
+        let client = OctocrabClient::new(self.config.token.as_deref())
+            .map_err(|e| Error::Sync(e.to_string()))?;
+        export::export_issues(repo, &self.config, &client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }

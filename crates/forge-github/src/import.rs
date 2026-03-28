@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use git_forge::Store;
 use git2::Repository;
 
-use crate::client::{fetch_issues, make_client};
+use crate::client::GitHubClient;
 use crate::config::GitHubSyncConfig;
 use crate::state::{load_sync_state, save_sync_state};
 use git_forge::sync::SyncReport;
@@ -16,10 +16,13 @@ use git_forge::sync::SyncReport;
 ///
 /// # Errors
 /// Returns an error if the GitHub API call fails or a git operation fails.
-pub async fn import_issues(repo: &Repository, cfg: &GitHubSyncConfig) -> Result<SyncReport> {
-    let client = make_client(cfg.token.as_deref())?;
+pub async fn import_issues(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+) -> Result<SyncReport> {
     let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
-    let issues = fetch_issues(&client, &cfg.owner, &cfg.repo).await?;
+    let issues = client.fetch_issues(&cfg.owner, &cfg.repo).await?;
 
     let store = Store::new(repo);
     let mut report = SyncReport::default();
