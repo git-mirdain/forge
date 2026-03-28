@@ -21,6 +21,9 @@ pub enum Error {
     /// A remote sync operation failed.
     #[error("sync: {0}")]
     Sync(String),
+    /// A configuration error.
+    #[error("config: {0}")]
+    Config(String),
 }
 
 /// Convenience result alias.

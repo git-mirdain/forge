@@ -7,10 +7,10 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
-use git2::Repository;
+use git2::{ErrorCode, ObjectType, Repository};
 
 use crate::issue::{Issue, IssueState};
-use crate::{Result, Store};
+use crate::{Error, Result, Store};
 
 /// Owns a [`Repository`] and executes forge operations.
 pub struct Executor {
@@ -102,6 +102,240 @@ impl Executor {
             remove_assignees,
         )
     }
+    /// Auto-detect provider config from git remote URL(s).
+    ///
+    /// # Errors
+    /// Returns an error if a remote is not found or its URL is unrecognized.
+    pub fn config_init(&self, remotes: &[&str]) -> Result<Vec<(String, String, String)>> {
+        let mut added = Vec::new();
+        for remote_name in remotes {
+            let remote = self
+                .repo
+                .find_remote(remote_name)
+                .map_err(|_| Error::Config(format!("remote not found: {remote_name}")))?;
+            let url = remote
+                .url()
+                .ok_or_else(|| Error::Config(format!("remote {remote_name} has no URL")))?;
+            let (provider, owner, repo) = parse_remote_url(url)?;
+            let sigil = default_sigil(&provider);
+            crate::refs::write_config_blob(
+                &self.repo,
+                &format!("provider/{provider}/{owner}/{repo}/sigil"),
+                sigil,
+            )?;
+            added.push((provider, owner, repo));
+        }
+        Ok(added)
+    }
+
+    /// Manually add a provider config entry.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn config_add(
+        &self,
+        provider: &str,
+        owner: &str,
+        repo: &str,
+        sigil: Option<&str>,
+    ) -> Result<()> {
+        let sigil = sigil.unwrap_or_else(|| default_sigil(provider));
+        crate::refs::write_config_blob(
+            &self.repo,
+            &format!("provider/{provider}/{owner}/{repo}/sigil"),
+            sigil,
+        )
+    }
+
+    /// List all configured provider entries.
+    ///
+    /// Returns `(provider, owner, repo, sigil)` tuples.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn config_list(&self) -> Result<Vec<(String, String, String, String)>> {
+        let reference = match self.repo.find_reference(crate::refs::CONFIG) {
+            Ok(r) => r,
+            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let root_tree = reference.peel_to_commit()?.tree()?;
+        let provider_entry = match root_tree.get_path(std::path::Path::new("provider")) {
+            Ok(e) => e,
+            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let provider_tree = self.repo.find_tree(provider_entry.id())?;
+
+        let mut entries = Vec::new();
+        for prov_entry in &provider_tree {
+            if prov_entry.kind() != Some(ObjectType::Tree) {
+                continue;
+            }
+            let Some(provider) = prov_entry.name() else {
+                continue;
+            };
+            let prov_tree = self.repo.find_tree(prov_entry.id())?;
+            for owner_entry in &prov_tree {
+                if owner_entry.kind() != Some(ObjectType::Tree) {
+                    continue;
+                }
+                let Some(owner) = owner_entry.name() else {
+                    continue;
+                };
+                let owner_tree = self.repo.find_tree(owner_entry.id())?;
+                for repo_entry in &owner_tree {
+                    if repo_entry.kind() != Some(ObjectType::Tree) {
+                        continue;
+                    }
+                    let Some(repo_name) = repo_entry.name() else {
+                        continue;
+                    };
+                    let sigil = crate::refs::read_config_blob(
+                        &self.repo,
+                        &format!("provider/{provider}/{owner}/{repo_name}/sigil"),
+                    )?
+                    .unwrap_or_default();
+                    entries.push((
+                        provider.to_string(),
+                        owner.to_string(),
+                        repo_name.to_string(),
+                        sigil,
+                    ));
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Remove a provider config entry.
+    ///
+    /// # Errors
+    /// Returns an error if the entry does not exist.
+    pub fn config_remove(&self, provider: &str, owner: &str, repo: &str) -> Result<()> {
+        let reference = self
+            .repo
+            .find_reference(crate::refs::CONFIG)
+            .map_err(|_| Error::Config(format!("no config entry for {provider}/{owner}/{repo}")))?;
+        let parent = reference.peel_to_commit()?;
+        let root_tree = parent.tree()?;
+
+        let owner_path = format!("provider/{provider}/{owner}");
+        let owner_entry = root_tree
+            .get_path(std::path::Path::new(&owner_path))
+            .map_err(|_| Error::Config(format!("no config entry for {provider}/{owner}/{repo}")))?;
+        let owner_tree = self.repo.find_tree(owner_entry.id())?;
+        let mut owner_builder = self.repo.treebuilder(Some(&owner_tree))?;
+        owner_builder
+            .remove(repo)
+            .map_err(|_| Error::Config(format!("no config entry for {provider}/{owner}/{repo}")))?;
+
+        // Rebuild upward from owner → provider → root.
+        let new_owner_oid = owner_builder.write()?;
+        let root_oid = rebuild_tree_upward(
+            &self.repo,
+            &root_tree,
+            &["provider", provider, owner],
+            new_owner_oid,
+        )?;
+        let new_root = self.repo.find_tree(root_oid)?;
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(crate::refs::CONFIG),
+            &sig,
+            &sig,
+            "forge: remove config entry",
+            &new_root,
+            &[&parent],
+        )?;
+        Ok(())
+    }
+}
+
+fn parse_remote_url(url: &str) -> Result<(String, String, String)> {
+    // SSH: git@github.com:owner/repo.git
+    if let Some(rest) = url.strip_prefix("git@") {
+        let (host, path) = rest
+            .split_once(':')
+            .ok_or_else(|| Error::Config(format!("cannot parse remote URL: {url}")))?;
+        let provider = host_to_provider(host)?;
+        let (owner, repo) = parse_owner_repo(path)?;
+        return Ok((provider, owner, repo));
+    }
+
+    // HTTPS: https://github.com/owner/repo.git
+    if let Some(without_scheme) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    {
+        let mut parts = without_scheme.splitn(3, '/');
+        let host = parts.next().unwrap();
+        let owner = parts
+            .next()
+            .ok_or_else(|| Error::Config(format!("cannot parse remote URL: {url}")))?;
+        let repo_raw = parts
+            .next()
+            .ok_or_else(|| Error::Config(format!("cannot parse remote URL: {url}")))?;
+        let provider = host_to_provider(host)?;
+        let repo = repo_raw.strip_suffix(".git").unwrap_or(repo_raw);
+        return Ok((provider, owner.to_string(), repo.to_string()));
+    }
+
+    Err(Error::Config(format!("cannot parse remote URL: {url}")))
+}
+
+fn host_to_provider(host: &str) -> Result<String> {
+    match host {
+        "github.com" => Ok("github".to_string()),
+        other => Err(Error::Config(format!(
+            "unrecognized host: {other} (use `forge config add` for manual setup)"
+        ))),
+    }
+}
+
+fn parse_owner_repo(path: &str) -> Result<(String, String)> {
+    let (owner, repo_raw) = path
+        .split_once('/')
+        .ok_or_else(|| Error::Config(format!("cannot parse owner/repo from: {path}")))?;
+    let repo = repo_raw.strip_suffix(".git").unwrap_or(repo_raw);
+    Ok((owner.to_string(), repo.to_string()))
+}
+
+fn default_sigil(provider: &str) -> &str {
+    match provider {
+        "github" => "GH#",
+        _ => "#",
+    }
+}
+
+/// Rebuild a tree chain from the leaf upward, replacing the entry at the
+/// given path segments with `new_oid`.
+fn rebuild_tree_upward(
+    repo: &Repository,
+    root: &git2::Tree<'_>,
+    segments: &[&str],
+    new_oid: git2::Oid,
+) -> Result<git2::Oid> {
+    if segments.is_empty() {
+        return Ok(new_oid);
+    }
+
+    // Walk down to collect trees for each segment except the last.
+    let mut trees = vec![root.clone()];
+    for &seg in &segments[..segments.len() - 1] {
+        let oid = trees.last().unwrap().get_name(seg).unwrap().id();
+        trees.push(repo.find_tree(oid)?);
+    }
+
+    // Rebuild bottom-up.
+    let mut child_oid = new_oid;
+    for (i, seg) in segments.iter().enumerate().rev() {
+        let base = &trees[i];
+        let mut builder = repo.treebuilder(Some(base))?;
+        builder.insert(seg, child_oid, 0o040_000)?;
+        child_oid = builder.write()?;
+    }
+    Ok(child_oid)
 }
 
 #[cfg(feature = "cli")]
@@ -115,9 +349,71 @@ impl Executor {
     /// Panics if facet-json fails to serialize a value (indicates a bug).
     #[allow(clippy::too_many_lines)]
     pub fn run(&self, cli: &crate::cli::Cli) -> Result<()> {
-        use crate::cli::{Command, IssueCommand};
+        use crate::cli::{Command, ConfigCommand, IssueCommand};
 
         match &cli.command {
+            Command::Config { command } => match command {
+                ConfigCommand::Init { remote } => {
+                    let remote = remote.as_deref().unwrap_or("origin");
+                    let added = self.config_init(&[remote])?;
+                    if cli.json {
+                        let json: Vec<String> = added
+                            .iter()
+                            .map(|(p, o, r)| {
+                                format!(r#"{{"provider":"{p}","owner":"{o}","repo":"{r}"}}"#)
+                            })
+                            .collect();
+                        println!("[{}]", json.join(","));
+                    } else {
+                        for (provider, owner, repo) in &added {
+                            println!("added {provider}/{owner}/{repo}");
+                        }
+                    }
+                }
+
+                ConfigCommand::Add {
+                    provider,
+                    owner,
+                    repo,
+                    sigil,
+                } => {
+                    self.config_add(provider, owner, repo, sigil.as_deref())?;
+                    if !cli.json {
+                        println!("added {provider}/{owner}/{repo}");
+                    }
+                }
+
+                ConfigCommand::List => {
+                    let entries = self.config_list()?;
+                    if cli.json {
+                        let json: Vec<String> = entries
+                            .iter()
+                            .map(|(p, o, r, s)| {
+                                format!(
+                                    r#"{{"provider":"{p}","owner":"{o}","repo":"{r}","sigil":"{s}"}}"#
+                                )
+                            })
+                            .collect();
+                        println!("[{}]", json.join(","));
+                    } else {
+                        for (provider, owner, repo, sigil) in &entries {
+                            println!("{provider}/{owner}/{repo}  sigil={sigil}");
+                        }
+                    }
+                }
+
+                ConfigCommand::Remove {
+                    provider,
+                    owner,
+                    repo,
+                } => {
+                    self.config_remove(provider, owner, repo)?;
+                    if !cli.json {
+                        println!("removed {provider}/{owner}/{repo}");
+                    }
+                }
+            },
+
             Command::Issue { command } => match command {
                 IssueCommand::New {
                     title,

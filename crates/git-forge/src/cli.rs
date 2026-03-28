@@ -34,6 +34,58 @@ pub enum Command {
         #[facet(args::subcommand)]
         command: IssueCommand,
     },
+    /// Manage provider configuration.
+    Config {
+        /// Config subcommand.
+        #[facet(args::subcommand)]
+        command: ConfigCommand,
+    },
+}
+
+/// Config subcommands.
+#[derive(Facet, Debug)]
+#[repr(u8)]
+pub enum ConfigCommand {
+    /// Auto-detect provider from git remote URL(s).
+    Init {
+        /// Remote name to parse (default: origin).
+        #[facet(args::named, args::short = 'r')]
+        remote: Option<String>,
+    },
+    /// Add a provider config entry.
+    Add {
+        /// Provider name (e.g. "github").
+        #[facet(args::positional)]
+        provider: String,
+
+        /// Repository owner or organization.
+        #[facet(args::positional)]
+        owner: String,
+
+        /// Repository name.
+        #[facet(args::positional)]
+        repo: String,
+
+        /// Sigil prefix for cross-references.
+        #[facet(args::named)]
+        sigil: Option<String>,
+    },
+    /// List all configured providers.
+    List,
+    /// Remove a provider config entry.
+    Remove {
+        /// Provider name.
+        #[facet(args::positional)]
+        provider: String,
+
+        /// Repository owner or organization.
+        #[facet(args::positional)]
+        owner: String,
+
+        /// Repository name.
+        #[facet(args::positional)]
+        repo: String,
+    },
 }
 
 /// Issue subcommands.
