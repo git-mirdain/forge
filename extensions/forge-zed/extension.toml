@@ -1,4 +1,4 @@
-[package]
+[extension]
 id = "forge"
 name = "Forge"
 version = "0.0.0"
