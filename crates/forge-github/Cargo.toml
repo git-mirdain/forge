@@ -8,6 +8,7 @@ license.workspace = true
 description = "GitHub import adapter for the forge store."
 
 [dependencies]
+git-chain = { workspace = true }
 git-forge = { workspace = true }
 git2 = { workspace = true }
 octocrab = { workspace = true }

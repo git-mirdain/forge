@@ -557,6 +557,7 @@ name = "forge-github"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "git-chain",
  "git-forge",
  "git2",
  "octocrab",
