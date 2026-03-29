@@ -1,0 +1,84 @@
+# feat: allow user-preferred display ID when multiple IDs map to the same OID
+
+## Problem
+
+`display_id_for_oid` in `crates/git-forge/src/index.rs` currently picks the first matching ID it finds via `HashMap::iter().find_map()`:
+
+```rust
+pub(crate) fn display_id_for_oid(
+    index: Option<&HashMap<String, String>>,
+    oid: &str,
+) -> Option<String> {
+    index?.iter().find_map(|(key, val)| {
+        if val == oid { Some(key.clone()) } else { None }
+    })
+}
+```
+
+When a forge issue is mirrored to multiple platforms (e.g. both `tangled.sh` and `github.com`), multiple index entries point to the same OID.
+The function returns whichever key the `HashMap` iterator yields first, which is effectively random.
+This means `forge issue list` and `forge issue show` may display `github.com/42` one run and `tangled.sh/7` the next, with no way for users to control it.
+
+## Examples
+
+Given an index like:
+
+| Display ID        | OID     |
+| ----------------- | ------- |
+| `tangled.sh/7`    | `abc123` |
+| `github.com/42`   | `abc123` |
+
+Running `forge issue list` might show:
+
+```text
+tangled.sh/7   Fix the widget
+```
+
+or:
+
+```text
+github.com/42  Fix the widget
+```
+
+Users who primarily work through one platform should be able to say "always prefer tangled.sh IDs when available."
+
+## Proposed solution
+
+1. **Add a `preferred-platform` (or similar) config key** — e.g. `forge config set preferred-platform tangled.sh`.
+   This tells forge which platform's display ID to prefer when multiple exist.
+
+2. **Update `display_id_for_oid`** — first attempt to find a matching ID whose key starts with the preferred platform prefix.
+   Fall back to the current behavior if no preference is set or no match exists for that platform.
+
+   Sketch:
+
+   ```rust
+   pub(crate) fn display_id_for_oid(
+       index: Option<&HashMap<String, String>>,
+       oid: &str,
+       preferred_platform: Option<&str>,
+   ) -> Option<String> {
+       let index = index?;
+       let matches: Vec<_> = index
+           .iter()
+           .filter(|(_, v)| *v == oid)
+           .map(|(k, _)| k.clone())
+           .collect();
+
+       if matches.is_empty() {
+           return None;
+       }
+
+       if let Some(platform) = preferred_platform {
+           if let Some(id) = matches.iter().find(|k| k.starts_with(platform)) {
+               return Some(id.clone());
+           }
+       }
+
+       Some(matches.into_iter().next().unwrap())
+   }
+   ```
+
+3. **Thread the preference through callers** — the three call sites in
+   `crates/git-forge/src/issue.rs` already have access to the repo; read
+   the config value once and pass it down.
