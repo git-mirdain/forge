@@ -3,6 +3,8 @@
 //! This module contains only clap type definitions — no execution logic.
 //! See [`crate::exe`] for the executor.
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::issue::IssueState;
@@ -89,6 +91,10 @@ pub enum CommentCommand {
 
         /// Comment body (Markdown).
         body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
     },
 
     /// Reply to an existing comment.
@@ -103,6 +109,10 @@ pub enum CommentCommand {
 
         /// Comment body (Markdown).
         body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
     },
 
     /// Resolve a comment thread.
@@ -117,6 +127,10 @@ pub enum CommentCommand {
 
         /// Optional resolution message.
         message: Option<String>,
+
+        /// Read message from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
     },
 
     /// List comments on an issue.
@@ -138,6 +152,10 @@ pub enum IssueCommand {
         /// Issue body (Markdown).
         #[arg(long)]
         body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
 
         /// Labels to attach.
         #[arg(long = "label", short = 'l')]
@@ -185,6 +203,10 @@ pub enum IssueCommand {
         /// New body (Markdown).
         #[arg(long)]
         body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
 
         /// New state.
         #[arg(long)]

@@ -520,9 +520,10 @@ impl Executor {
             },
 
             Command::Comment { command } => match command {
-                CommentCommand::Add { issue, body } => {
-                    let body = body.as_deref().unwrap_or("");
-                    let comment = self.add_issue_comment(issue, body, None)?;
+                CommentCommand::Add { issue, body, file } => {
+                    let body =
+                        crate::input::resolve_body(body.clone(), file.clone())?.unwrap_or_default();
+                    let comment = self.add_issue_comment(issue, &body, None)?;
                     print_comment(&comment, cli.json);
                 }
 
@@ -530,9 +531,11 @@ impl Executor {
                     issue,
                     reply_to,
                     body,
+                    file,
                 } => {
-                    let body = body.as_deref().unwrap_or("");
-                    let comment = self.reply_issue_comment(issue, body, reply_to, None)?;
+                    let body =
+                        crate::input::resolve_body(body.clone(), file.clone())?.unwrap_or_default();
+                    let comment = self.reply_issue_comment(issue, &body, reply_to, None)?;
                     print_comment(&comment, cli.json);
                 }
 
@@ -540,8 +543,10 @@ impl Executor {
                     issue,
                     thread,
                     message,
+                    file,
                 } => {
-                    let comment = self.resolve_issue_comment(issue, thread, message.as_deref())?;
+                    let resolved = crate::input::resolve_body(message.clone(), file.clone())?;
+                    let comment = self.resolve_issue_comment(issue, thread, resolved.as_deref())?;
                     print_comment(&comment, cli.json);
                 }
 
@@ -562,19 +567,23 @@ impl Executor {
                 IssueCommand::New {
                     title,
                     body,
+                    file,
                     labels,
                     assignees,
                     interactive,
                 } => {
-                    let interactive =
-                        *interactive || (title.is_none() && std::io::stdin().is_terminal());
+                    let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
+                    let interactive = *interactive
+                        || (title.is_none()
+                            && resolved_body.is_none()
+                            && std::io::stdin().is_terminal());
                     let (title, body, labels, assignees) = if interactive {
                         let input = crate::interactive::prompt_new_issue(title.as_deref())?;
                         (input.title, input.body, input.labels, input.assignees)
                     } else {
                         (
                             title.clone().unwrap_or_default(),
-                            body.clone().unwrap_or_default(),
+                            resolved_body.unwrap_or_default(),
                             labels.clone(),
                             assignees.clone(),
                         )
@@ -669,6 +678,7 @@ impl Executor {
                     reference,
                     title,
                     body,
+                    file,
                     state,
                     add_labels,
                     remove_labels,
@@ -676,8 +686,9 @@ impl Executor {
                     remove_assignees,
                     interactive,
                 } => {
+                    let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
                     let no_fields = title.is_none()
-                        && body.is_none()
+                        && resolved_body.is_none()
                         && state.is_none()
                         && add_labels.is_empty()
                         && remove_labels.is_empty()
@@ -693,11 +704,11 @@ impl Executor {
                         let input = crate::interactive::prompt_edit_issue(&current)?;
                         (
                             input.title.or_else(|| title.clone()),
-                            input.body.or_else(|| body.clone()),
+                            input.body.or_else(|| resolved_body.clone()),
                             input.state.or_else(|| state.clone()),
                         )
                     } else {
-                        (title.clone(), body.clone(), state.clone())
+                        (title.clone(), resolved_body, state.clone())
                     };
                     let add_labels: Vec<&str> = add_labels.iter().map(String::as_str).collect();
                     let remove_labels: Vec<&str> =
