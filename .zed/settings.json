@@ -4,5 +4,14 @@
       "PATH": "target/debug:$PATH",
       "MANPATH": "$PWD/target/share/man:$MANPATH"
     }
+  },
+  "context_servers": {
+    "forge-mcp": {
+      "source": "custom",
+      "command": {
+        "path": "target/debug/forge-mcp",
+        "args": []
+      }
+    }
   }
 }
