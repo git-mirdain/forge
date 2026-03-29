@@ -1,14 +1,17 @@
 //! forge → GitHub export functions.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use git_forge::Store;
+use git_forge::comment::{issue_comment_ref, list_comments};
 use git_forge::refs::ISSUE_INDEX;
+use git_forge::sync::SyncReport;
 use git2::Repository;
 
 use crate::client::GitHubClient;
 use crate::config::GitHubSyncConfig;
 use crate::state::{load_sync_state, lookup_by_forge_oid, save_sync_state};
-use git_forge::sync::SyncReport;
 
 /// Export locally-created issues to GitHub.
 ///
@@ -69,6 +72,76 @@ pub async fn export_issues(
         }
     }
 
+    for issue in &issues {
+        let comment_report =
+            export_issue_comments_with_state(repo, cfg, client, &issue.oid, &mut state).await?;
+        report.exported += comment_report.exported;
+        report.skipped += comment_report.skipped;
+        report.failed += comment_report.failed;
+    }
+
     save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
+    Ok(report)
+}
+
+/// Export locally-created issue comments to GitHub.
+///
+/// Comments already recorded in the sync state are skipped.
+///
+/// # Errors
+/// Returns an error if the GitHub API call fails or a git operation fails.
+pub async fn export_issue_comments(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+    forge_issue_oid: &str,
+) -> Result<SyncReport> {
+    let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
+    let report =
+        export_issue_comments_with_state(repo, cfg, client, forge_issue_oid, &mut state).await?;
+    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
+    Ok(report)
+}
+
+async fn export_issue_comments_with_state(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+    forge_issue_oid: &str,
+    state: &mut HashMap<String, String>,
+) -> Result<SyncReport> {
+    let Some(github_number) = lookup_by_forge_oid(state, "issues", forge_issue_oid) else {
+        return Ok(SyncReport::default());
+    };
+
+    let ref_name = issue_comment_ref(forge_issue_oid);
+    let comments = list_comments(repo, &ref_name)?;
+
+    let mut report = SyncReport::default();
+
+    for comment in &comments {
+        if lookup_by_forge_oid(state, "comments", &comment.oid).is_some() {
+            report.skipped += 1;
+            continue;
+        }
+
+        match client
+            .create_issue_comment(&cfg.owner, &cfg.repo, github_number, &comment.body)
+            .await
+        {
+            Ok(github_comment_id) => {
+                state.insert(format!("comments/{github_comment_id}"), comment.oid.clone());
+                report.exported += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "forge: failed to export comment {} on issue {forge_issue_oid}: {e}",
+                    comment.oid
+                );
+                report.failed += 1;
+            }
+        }
+    }
+
     Ok(report)
 }

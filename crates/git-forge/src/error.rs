@@ -6,6 +6,9 @@ pub enum Error {
     /// A git operation failed.
     #[error(transparent)]
     Git(#[from] git2::Error),
+    /// An I/O operation failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     /// No entity matches the given display ID or OID prefix.
     #[error("no entity matching #{0}")]
     NotFound(String),

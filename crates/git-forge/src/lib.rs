@@ -1,5 +1,6 @@
 //! Local-first infrastructure for Git forges.
 
+pub mod comment;
 pub mod error;
 pub mod issue;
 pub mod refs;
@@ -7,6 +8,9 @@ pub mod sync;
 
 #[cfg(feature = "cli")]
 pub mod cli;
+
+#[cfg(feature = "cli")]
+pub mod input;
 
 #[cfg(feature = "cli")]
 pub mod interactive;

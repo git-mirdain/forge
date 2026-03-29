@@ -3,6 +3,8 @@
 //! This module contains only clap type definitions — no execution logic.
 //! See [`crate::exe`] for the executor.
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::issue::IssueState;
@@ -28,6 +30,12 @@ pub enum Command {
         /// Issue subcommand.
         #[command(subcommand)]
         command: IssueCommand,
+    },
+    /// Manage comments on issues.
+    Comment {
+        /// Comment subcommand.
+        #[command(subcommand)]
+        command: CommentCommand,
     },
     /// Manage provider configuration.
     Config {
@@ -72,6 +80,67 @@ pub enum ConfigCommand {
     },
 }
 
+/// Comment subcommands.
+#[derive(Subcommand, Debug)]
+pub enum CommentCommand {
+    /// Add a top-level comment to an issue.
+    Add {
+        /// Issue display ID or OID prefix.
+        #[arg(long)]
+        issue: String,
+
+        /// Comment body (Markdown).
+        body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
+    },
+
+    /// Reply to an existing comment.
+    Reply {
+        /// Issue display ID or OID prefix.
+        #[arg(long)]
+        issue: String,
+
+        /// OID of the comment to reply to.
+        #[arg(long = "to")]
+        reply_to: String,
+
+        /// Comment body (Markdown).
+        body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
+    },
+
+    /// Resolve a comment thread.
+    Resolve {
+        /// Issue display ID or OID prefix.
+        #[arg(long)]
+        issue: String,
+
+        /// OID of the comment that starts the thread.
+        #[arg(long = "thread")]
+        thread: String,
+
+        /// Optional resolution message.
+        message: Option<String>,
+
+        /// Read message from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
+    },
+
+    /// List comments on an issue.
+    List {
+        /// Issue display ID or OID prefix.
+        #[arg(long)]
+        issue: String,
+    },
+}
+
 /// Issue subcommands.
 #[derive(Subcommand, Debug)]
 pub enum IssueCommand {
@@ -83,6 +152,10 @@ pub enum IssueCommand {
         /// Issue body (Markdown).
         #[arg(long)]
         body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
 
         /// Labels to attach.
         #[arg(long = "label", short = 'l')]
@@ -130,6 +203,10 @@ pub enum IssueCommand {
         /// New body (Markdown).
         #[arg(long)]
         body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
 
         /// New state.
         #[arg(long)]

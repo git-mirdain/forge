@@ -29,9 +29,11 @@ impl ForgeMcpServer {
     pub fn new() -> anyhow::Result<Self> {
         let repo = Repository::discover(".")?;
         let repo_path = repo.path().to_path_buf();
+        let mut tool_router = Self::issue_router();
+        tool_router.merge(Self::comment_router());
         Ok(Self {
             repo_path,
-            tool_router: Self::issue_router(),
+            tool_router,
             prompt_router: Self::prompt_router(),
         })
     }
