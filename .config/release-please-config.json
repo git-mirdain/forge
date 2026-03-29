@@ -15,7 +15,8 @@
     "crates/git-forge": {},
     "crates/forge-github": {},
     "crates/forge-mcp": {},
-    "crates/forge-server": {}
+    "crates/forge-server": {},
+    "extensions/forge-zed": {}
   },
   "plugins": [{ "type": "sentence-case" }, { "type": "cargo-workspace" }],
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json"

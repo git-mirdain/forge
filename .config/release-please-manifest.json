@@ -2,5 +2,6 @@
   "crates/git-forge": "0.0.0",
   "crates/forge-github": "0.0.0",
   "crates/forge-mcp": "0.0.0",
-  "crates/forge-server": "0.0.0"
+  "crates/forge-server": "0.0.0",
+  "extensions/forge-zed": "0.0.0"
 }

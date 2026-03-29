@@ -101,6 +101,19 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
+  zed-extension:
+    name: Zed Extension
+    runs-on: ubuntu-24.04
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-wasip2
+          cache: true
+      - name: Build Zed extension
+        run: cargo build --manifest-path extensions/forge-zed/Cargo.toml --target wasm32-wasip2 --release
+
   man:
     name: man-generation
     runs-on: ubuntu-24.04
@@ -134,7 +147,7 @@ jobs:
   ci:
     name: CI
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)) }}
-    needs: [linux, musllinux, windows, macos, man]
+    needs: [linux, musllinux, windows, macos, zed-extension, man]
     runs-on: ubuntu-latest
     steps:
       - run: |

@@ -140,6 +140,20 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-features -- -D warnings
 
+  clippy-zed-extension:
+    name: Clippy (Zed extension)
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+          target: wasm32-wasip2
+          cache: true
+      - name: Run clippy
+        run: cargo clippy --manifest-path extensions/forge-zed/Cargo.toml --target wasm32-wasip2 -- -D warnings
+
   rustfmt:
     name: rustfmt
     runs-on: ubuntu-latest
@@ -151,7 +165,9 @@ jobs:
           components: rustfmt
           cache: true
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --manifest-path extensions/forge-zed/Cargo.toml -- --check
 
   lint:
     name: Lint
@@ -163,6 +179,7 @@ jobs:
         cargo-deny,
         semver-checks,
         clippy,
+        clippy-zed-extension,
         rustfmt,
       ]
     runs-on: ubuntu-latest

@@ -27,3 +27,4 @@ These are [borrowed from Git itself](https://git-scm.com/book/en/v2/Git-Internal
 | [`forge-github`](crates/forge-github/) | GitHub import adapter for the forge store. | Plumbing |
 | [`forge-mcp`](crates/forge-mcp/) | MCP server exposing forge metadata from the Git object store. | Plumbing |
 | [`forge-server`](crates/forge-server/) | Sync daemon — watches refs and coordinates GitHub sync. | Plumbing |
+| [`forge-zed`](extensions/forge-zed/) | Zed editor extension — surfaces forge tools via MCP context server. | Plumbing |
