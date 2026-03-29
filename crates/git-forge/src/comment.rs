@@ -7,8 +7,8 @@ use git_chain::{Chain, ChainEntry};
 use git2::{Oid, Repository};
 use serde::Serialize;
 
-use crate::Result;
 use crate::refs::{ISSUE_COMMENTS_PREFIX, REVIEW_COMMENTS_PREFIX};
+use crate::{Error, Result};
 
 /// The anchor target for a comment.
 #[derive(Debug, Clone, Serialize, Facet)]
@@ -220,6 +220,23 @@ pub fn add_comment(
     comment_from_chain_entry(repo, &entry)
 }
 
+/// Resolve an OID prefix to a full OID from the comment chain.
+fn resolve_comment_oid(repo: &Repository, ref_name: &str, prefix: &str) -> Result<Oid> {
+    if prefix.len() == 40 {
+        return Ok(Oid::from_str(prefix)?);
+    }
+    let entries = repo.walk(ref_name, None)?;
+    let matches: Vec<_> = entries
+        .iter()
+        .filter(|e| e.commit.to_string().starts_with(prefix))
+        .collect();
+    match matches.len() {
+        0 => Err(Error::NotFound(prefix.to_string())),
+        1 => Ok(matches[0].commit),
+        _ => Err(Error::Ambiguous(prefix.to_string())),
+    }
+}
+
 /// Append a reply to an existing comment.
 ///
 /// # Errors
@@ -234,7 +251,7 @@ pub fn add_reply(
     let trailers = format_trailers(anchor, false, None);
     let message = build_message(body, &trailers);
     let tree = repo.build_tree(&[])?;
-    let parent = Oid::from_str(reply_to_oid)?;
+    let parent = resolve_comment_oid(repo, ref_name, reply_to_oid)?;
     let entry = repo.append(ref_name, &message, tree, Some(parent))?;
     comment_from_chain_entry(repo, &entry)
 }
@@ -253,7 +270,7 @@ pub fn resolve_comment(
     let trailers = format_trailers(None, true, None);
     let msg = build_message(body, &trailers);
     let tree = repo.build_tree(&[])?;
-    let parent = Oid::from_str(reply_to_oid)?;
+    let parent = resolve_comment_oid(repo, ref_name, reply_to_oid)?;
     let entry = repo.append(ref_name, &msg, tree, Some(parent))?;
     comment_from_chain_entry(repo, &entry)
 }
@@ -269,10 +286,11 @@ pub fn edit_comment(
     new_body: &str,
     anchor: Option<&Anchor>,
 ) -> Result<Comment> {
-    let trailers = format_trailers(anchor, false, Some(original_oid));
+    let parent = resolve_comment_oid(repo, ref_name, original_oid)?;
+    let parent_str = parent.to_string();
+    let trailers = format_trailers(anchor, false, Some(&parent_str));
     let message = build_message(new_body, &trailers);
     let tree = repo.build_tree(&[])?;
-    let parent = Oid::from_str(original_oid)?;
     let entry = repo.append(ref_name, &message, tree, Some(parent))?;
     comment_from_chain_entry(repo, &entry)
 }
@@ -294,7 +312,7 @@ pub fn list_comments(repo: &Repository, ref_name: &str) -> Result<Vec<Comment>> 
 /// # Errors
 /// Returns an error if the git operation fails.
 pub fn list_thread(repo: &Repository, ref_name: &str, root_oid: &str) -> Result<Vec<Comment>> {
-    let oid = Oid::from_str(root_oid)?;
+    let oid = resolve_comment_oid(repo, ref_name, root_oid)?;
     let entries = repo.walk(ref_name, Some(oid))?;
     entries
         .iter()

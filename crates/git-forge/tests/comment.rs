@@ -5,6 +5,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use git_forge::Store;
+use git_forge::comment::list_thread;
 use git_forge::comment::{
     Anchor, add_comment, add_reply, edit_comment, issue_comment_ref, list_comments, resolve_comment,
 };
@@ -286,4 +287,64 @@ fn edit_preserves_anchor() {
         }
         Anchor::CommitRange { .. } => panic!("expected Object anchor"),
     }
+}
+
+// --- OID prefix resolution tests ---
+
+#[test]
+fn reply_accepts_oid_prefix() {
+    let (_dir, repo) = test_repo();
+    let ref_name = issue_comment_ref("abc123");
+    let root = add_comment(&repo, &ref_name, "root", None).unwrap();
+
+    let prefix = &root.oid[..8];
+    let reply = add_reply(&repo, &ref_name, "prefix reply", prefix, None).unwrap();
+    assert_eq!(reply.reply_to.as_deref(), Some(root.oid.as_str()));
+}
+
+#[test]
+fn resolve_accepts_oid_prefix() {
+    let (_dir, repo) = test_repo();
+    let ref_name = issue_comment_ref("abc123");
+    let root = add_comment(&repo, &ref_name, "root", None).unwrap();
+
+    let prefix = &root.oid[..8];
+    let resolution = resolve_comment(&repo, &ref_name, prefix, Some("done")).unwrap();
+    assert!(resolution.resolved);
+    assert_eq!(resolution.reply_to.as_deref(), Some(root.oid.as_str()));
+}
+
+#[test]
+fn edit_accepts_oid_prefix() {
+    let (_dir, repo) = test_repo();
+    let ref_name = issue_comment_ref("abc123");
+    let original = add_comment(&repo, &ref_name, "original", None).unwrap();
+
+    let prefix = &original.oid[..8];
+    let edited = edit_comment(&repo, &ref_name, prefix, "edited", None).unwrap();
+    assert_eq!(edited.body, "edited");
+    assert_eq!(edited.replaces.as_deref(), Some(original.oid.as_str()));
+}
+
+#[test]
+fn list_thread_accepts_oid_prefix() {
+    let (_dir, repo) = test_repo();
+    let ref_name = issue_comment_ref("abc123");
+    let root = add_comment(&repo, &ref_name, "root", None).unwrap();
+    add_reply(&repo, &ref_name, "reply", &root.oid, None).unwrap();
+    add_comment(&repo, &ref_name, "unrelated", None).unwrap();
+
+    let prefix = &root.oid[..8];
+    let thread = list_thread(&repo, &ref_name, prefix).unwrap();
+    assert_eq!(thread.len(), 2);
+}
+
+#[test]
+fn oid_prefix_not_found_errors() {
+    let (_dir, repo) = test_repo();
+    let ref_name = issue_comment_ref("abc123");
+    add_comment(&repo, &ref_name, "root", None).unwrap();
+
+    let result = add_reply(&repo, &ref_name, "reply", "asdfhjkl", None);
+    assert!(result.is_err());
 }
