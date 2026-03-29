@@ -253,6 +253,59 @@ impl Store<'_> {
         })
     }
 
+    /// Create a review with a custom git author, skipping object pinning.
+    ///
+    /// Used when importing from an external source where target objects may not
+    /// be available in the local repository (e.g. PR head commits not yet fetched).
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_review_imported_no_pin(
+        &self,
+        title: &str,
+        description: &str,
+        target: &ReviewTarget,
+        source_ref: Option<&str>,
+        display_id: &str,
+        author: &git2::Signature<'_>,
+        source: &str,
+    ) -> Result<Review> {
+        let mut fields: Vec<(&str, &[u8])> = vec![
+            ("title", title.as_bytes()),
+            ("description", description.as_bytes()),
+            ("meta/state", b"open"),
+            ("meta/target/head", target.head.as_bytes()),
+            ("source/url", source.as_bytes()),
+        ];
+        if let Some(ref base) = target.base {
+            fields.push(("meta/target/base", base.as_bytes()));
+        }
+        if let Some(sref) = source_ref {
+            fields.push(("meta/ref", sref.as_bytes()));
+        }
+
+        let entry = self.repo.create(
+            REVIEW_PREFIX,
+            &IdStrategy::CommitOid,
+            &fields,
+            "forge: create review",
+            Some(author),
+        )?;
+
+        index_upsert(self.repo, REVIEW_INDEX, &[(display_id, &entry.id)])?;
+
+        Ok(Review {
+            oid: entry.id.clone(),
+            display_id: Some(display_id.to_string()),
+            title: title.to_string(),
+            target: target.clone(),
+            source_ref: source_ref.map(String::from),
+            state: ReviewState::Open,
+            description: description.to_string(),
+        })
+    }
+
     /// Fetch a single review by display ID or OID prefix.
     ///
     /// # Errors
