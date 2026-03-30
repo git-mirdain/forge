@@ -330,9 +330,15 @@ impl Executor {
         body: &str,
         anchor: Option<&Anchor>,
     ) -> Result<Comment> {
-        self.repo
+        let obj = self
+            .repo
             .find_object(git2::Oid::from_str(object_oid)?, None)
             .map_err(|_| Error::NotFound(object_oid.to_string()))?;
+        match obj.kind() {
+            Some(ObjectType::Commit | ObjectType::Blob | ObjectType::Tag) => {}
+            Some(other) => return Err(Error::InvalidObjectType(other.to_string())),
+            None => return Err(Error::InvalidObjectType("unknown".into())),
+        }
         let ref_name = object_comment_ref(object_oid);
         add_comment(&self.repo, &ref_name, body, anchor)
     }
@@ -940,7 +946,8 @@ impl Executor {
     /// If the path is clean, resolves via `HEAD:<path>`. If dirty and
     /// `allow_dirty` is set, hashes the working-tree content into the object
     /// store and returns the resulting OID.
-    fn resolve_path(&self, path: &std::path::Path, allow_dirty: bool) -> Result<String> {
+    #[doc(hidden)]
+    pub fn resolve_path(&self, path: &std::path::Path, allow_dirty: bool) -> Result<String> {
         let workdir = self
             .repo
             .workdir()
@@ -987,7 +994,8 @@ impl Executor {
     /// When `allow_dirty` is set and the revspec references HEAD (either the
     /// commit itself or a `HEAD:<path>` subtree), the working-tree content is
     /// hashed into the object store instead.
-    fn resolve_head(&self, spec: &str, allow_dirty: bool) -> Result<String> {
+    #[doc(hidden)]
+    pub fn resolve_head(&self, spec: &str, allow_dirty: bool) -> Result<String> {
         // HEAD:<path> — delegate to resolve_path for dirty-aware handling.
         if let Some(path) = spec.strip_prefix("HEAD:") {
             return self.resolve_path(std::path::Path::new(path), allow_dirty);
@@ -1020,7 +1028,8 @@ impl Executor {
     /// Resolve `--issue`, `--review`, or `--object` to the comment chain ref name.
     ///
     /// Validates that `--object` targets a commit, blob, or tag (not a bare tree).
-    fn resolve_comment_entity(
+    #[doc(hidden)]
+    pub fn resolve_comment_entity(
         &self,
         issue: Option<&str>,
         review: Option<&str>,
@@ -1971,7 +1980,8 @@ fn walk_tree(
 ///
 /// Respects `.gitignore` rules, follows symlinks, and preserves the executable
 /// bit on files.
-fn hash_worktree_dir(repo: &Repository, dir: &std::path::Path) -> Result<git2::Oid> {
+#[doc(hidden)]
+pub fn hash_worktree_dir(repo: &Repository, dir: &std::path::Path) -> Result<git2::Oid> {
     let mut builder = repo.treebuilder(None)?;
     let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<std::result::Result<_, _>>()?;
     entries.sort_by_key(std::fs::DirEntry::file_name);
@@ -2020,7 +2030,9 @@ fn hash_worktree_dir(repo: &Repository, dir: &std::path::Path) -> Result<git2::O
 /// env var to be unset. `missing_input` indicates whether the caller still
 /// needs user-supplied content (e.g. no `--body` was given).
 #[cfg(feature = "cli")]
-fn should_interact(missing_input: bool) -> bool {
+#[doc(hidden)]
+#[must_use]
+pub fn should_interact(missing_input: bool) -> bool {
     use std::io::IsTerminal;
     missing_input
         && std::io::stdin().is_terminal()
