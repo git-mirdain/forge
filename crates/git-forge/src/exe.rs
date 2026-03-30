@@ -10,6 +10,7 @@ use std::path::Path;
 
 use facet::Facet;
 use git2::{ErrorCode, ObjectType, Repository};
+use serde::Serialize;
 
 use crate::comment::{
     Anchor, Comment, add_comment, add_reply, issue_comment_ref, list_comments, resolve_comment,
@@ -881,6 +882,31 @@ impl Executor {
                         }
                     }
                 }
+
+                ReviewCommand::Coverage { revision } => {
+                    let (covered, uncovered) = review_coverage(&self.repo, self, revision)?;
+                    let total = covered.len() + uncovered.len();
+                    if cli.json {
+                        let report = CoverageReport {
+                            total,
+                            covered: covered.len(),
+                            uncovered_files: &uncovered,
+                        };
+                        println!(
+                            "{}",
+                            facet_json::to_string_pretty(&report).expect("serialize")
+                        );
+                    } else if total == 0 {
+                        println!("No blobs found in {revision}.");
+                    } else if uncovered.is_empty() {
+                        println!("All {total} blobs covered by approved reviews.");
+                    } else {
+                        println!("{}/{total} blobs covered. Uncovered:\n", covered.len());
+                        for (path, oid) in &uncovered {
+                            println!("  {} {path}", &oid[..oid.len().min(12)]);
+                        }
+                    }
+                }
             },
 
             Command::Issue { command } => match command {
@@ -1353,6 +1379,68 @@ fn build_anchor(
     } else {
         None
     }
+}
+
+#[derive(Serialize, Facet)]
+struct CoverageReport<'a> {
+    total: usize,
+    covered: usize,
+    uncovered_files: &'a [(String, String)],
+}
+
+type FileList = Vec<(String, String)>;
+
+/// Compute review coverage for a revision.
+///
+/// Returns `(covered, uncovered)` where each is a list of `(path, blob_oid)`.
+fn review_coverage(
+    repo: &git2::Repository,
+    executor: &Executor,
+    revision: &str,
+) -> Result<(FileList, FileList)> {
+    // Resolve the target revision to a tree.
+    let obj = repo
+        .revparse_single(revision)
+        .map_err(|_| Error::NotFound(revision.to_string()))?;
+    let tree = match obj.kind() {
+        Some(git2::ObjectType::Commit) => {
+            let commit = repo.find_commit(obj.id())?;
+            commit.tree()?
+        }
+        Some(git2::ObjectType::Tree) => repo.find_tree(obj.id())?,
+        _ => {
+            return Err(Error::Config(
+                "revision must resolve to a commit or tree".into(),
+            ));
+        }
+    };
+
+    let mut all_blobs: Vec<(String, String)> = Vec::new();
+    walk_tree(repo, &tree, "", &mut all_blobs);
+
+    // Collect blob OIDs covered by any approved review.
+    let reviews = executor.list_reviews(None)?;
+    let mut approved_oids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for review in &reviews {
+        if review.approvals.is_empty() {
+            continue;
+        }
+        let files = review_target_files(repo, review)?;
+        for (_, oid) in files {
+            approved_oids.insert(oid);
+        }
+    }
+
+    let mut covered = Vec::new();
+    let mut uncovered = Vec::new();
+    for (path, oid) in all_blobs {
+        if approved_oids.contains(&oid) {
+            covered.push((path, oid));
+        } else {
+            uncovered.push((path, oid));
+        }
+    }
+    Ok((covered, uncovered))
 }
 
 fn print_review_list(reviews: &[Review]) {

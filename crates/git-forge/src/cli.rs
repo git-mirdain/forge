@@ -298,6 +298,13 @@ pub enum ReviewCommand {
         /// Display ID or OID prefix.
         reference: String,
     },
+
+    /// Show which blobs in a tree lack approved reviews.
+    Coverage {
+        /// Git revision to check (defaults to HEAD).
+        #[arg(default_value = "HEAD")]
+        revision: String,
+    },
 }
 
 /// Issue subcommands.
