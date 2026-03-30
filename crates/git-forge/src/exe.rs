@@ -1302,13 +1302,24 @@ impl Executor {
                     issue,
                     review,
                     object,
+                    path,
                 } => {
                     let ref_name = self.resolve_comment_entity(
                         issue.as_deref(),
                         review.as_deref(),
                         object.as_deref(),
                     )?;
-                    let comments = list_comments(&self.repo, &ref_name)?;
+                    let mut comments = list_comments(&self.repo, &ref_name)?;
+                    if let Some(filter_path) = path {
+                        comments.retain(|c| {
+                            c.anchor.as_ref().is_some_and(|a| match a {
+                                Anchor::Object { path, .. } => {
+                                    path.as_deref() == Some(filter_path.as_str())
+                                }
+                                Anchor::CommitRange { .. } => false,
+                            })
+                        });
+                    }
                     if cli.json {
                         println!(
                             "{}",

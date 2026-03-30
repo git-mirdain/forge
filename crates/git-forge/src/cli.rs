@@ -269,6 +269,10 @@ pub enum CommentCommand {
         /// Git object OID.
         #[arg(long)]
         object: Option<String>,
+
+        /// Filter comments by anchor path.
+        #[arg(long)]
+        path: Option<String>,
     },
 }
 
