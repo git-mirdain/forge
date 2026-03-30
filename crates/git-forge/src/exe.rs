@@ -1401,12 +1401,21 @@ impl Executor {
                     object,
                     path,
                 } => {
-                    let ref_name = self.resolve_comment_entity(
-                        issue.as_deref(),
-                        review.as_deref(),
-                        object.as_deref(),
-                    )?;
-                    let mut comments = list_comments(&self.repo, &ref_name)?;
+                    let effective_review = review.as_deref().map(String::from).or_else(|| {
+                        if issue.is_none() && object.is_none() {
+                            self.active_review()
+                        } else {
+                            None
+                        }
+                    });
+
+                    let mut comments = if let Some(ref r) = effective_review {
+                        self.list_review_comments(r)?
+                    } else {
+                        let ref_name =
+                            self.resolve_comment_entity(issue.as_deref(), None, object.as_deref())?;
+                        list_comments(&self.repo, &ref_name)?
+                    };
                     if let Some(filter_path) = path {
                         comments.retain(|c| {
                             c.anchor.as_ref().is_some_and(|a| match a {
