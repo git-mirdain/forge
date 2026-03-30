@@ -1299,6 +1299,7 @@ impl Executor {
                     issue,
                     review,
                     object,
+                    path,
                     anchor,
                     anchor_path,
                     range,
@@ -1315,18 +1316,29 @@ impl Executor {
                     } else {
                         resolved.unwrap_or_default()
                     };
-                    let anchor = build_anchor(
-                        anchor.as_deref(),
-                        anchor_path.as_deref(),
-                        range.as_deref(),
-                        anchor_start.as_deref(),
-                        anchor_end.as_deref(),
-                    );
-                    let ref_name = self.resolve_comment_entity(
-                        issue.as_deref(),
-                        review.as_deref(),
-                        object.as_deref(),
-                    )?;
+                    let (ref_name, anchor) = if let Some(p) = path {
+                        let blob_oid = self.resolve_path(p, cli.allow_dirty)?;
+                        let anchor = Some(Anchor::Object {
+                            oid: blob_oid.clone(),
+                            path: Some(p.display().to_string()),
+                            range: range.clone(),
+                        });
+                        (object_comment_ref(&blob_oid), anchor)
+                    } else {
+                        let anchor = build_anchor(
+                            anchor.as_deref(),
+                            anchor_path.as_deref(),
+                            range.as_deref(),
+                            anchor_start.as_deref(),
+                            anchor_end.as_deref(),
+                        );
+                        let ref_name = self.resolve_comment_entity(
+                            issue.as_deref(),
+                            review.as_deref(),
+                            object.as_deref(),
+                        )?;
+                        (ref_name, anchor)
+                    };
                     let comment = add_comment(&self.repo, &ref_name, &body, anchor.as_ref())?;
                     print_comment(&comment, cli.json);
                 }
@@ -1335,6 +1347,7 @@ impl Executor {
                     issue,
                     review,
                     object,
+                    path,
                     reply_to,
                     anchor,
                     anchor_path,
@@ -1352,18 +1365,29 @@ impl Executor {
                     } else {
                         resolved.unwrap_or_default()
                     };
-                    let anchor = build_anchor(
-                        anchor.as_deref(),
-                        anchor_path.as_deref(),
-                        range.as_deref(),
-                        anchor_start.as_deref(),
-                        anchor_end.as_deref(),
-                    );
-                    let ref_name = self.resolve_comment_entity(
-                        issue.as_deref(),
-                        review.as_deref(),
-                        object.as_deref(),
-                    )?;
+                    let (ref_name, anchor) = if let Some(p) = path {
+                        let blob_oid = self.resolve_path(p, cli.allow_dirty)?;
+                        let anchor = Some(Anchor::Object {
+                            oid: blob_oid.clone(),
+                            path: Some(p.display().to_string()),
+                            range: range.clone(),
+                        });
+                        (object_comment_ref(&blob_oid), anchor)
+                    } else {
+                        let anchor = build_anchor(
+                            anchor.as_deref(),
+                            anchor_path.as_deref(),
+                            range.as_deref(),
+                            anchor_start.as_deref(),
+                            anchor_end.as_deref(),
+                        );
+                        let ref_name = self.resolve_comment_entity(
+                            issue.as_deref(),
+                            review.as_deref(),
+                            object.as_deref(),
+                        )?;
+                        (ref_name, anchor)
+                    };
                     let comment =
                         add_reply(&self.repo, &ref_name, &body, reply_to, anchor.as_ref())?;
                     print_comment(&comment, cli.json);
@@ -1373,6 +1397,7 @@ impl Executor {
                     issue,
                     review,
                     object,
+                    path,
                     thread,
                     message,
                     file,
@@ -1385,11 +1410,16 @@ impl Executor {
                     } else {
                         resolved
                     };
-                    let ref_name = self.resolve_comment_entity(
-                        issue.as_deref(),
-                        review.as_deref(),
-                        object.as_deref(),
-                    )?;
+                    let ref_name = if let Some(p) = path {
+                        let blob_oid = self.resolve_path(p, cli.allow_dirty)?;
+                        object_comment_ref(&blob_oid)
+                    } else {
+                        self.resolve_comment_entity(
+                            issue.as_deref(),
+                            review.as_deref(),
+                            object.as_deref(),
+                        )?
+                    };
                     let comment =
                         resolve_comment(&self.repo, &ref_name, thread, resolved.as_deref())?;
                     print_comment(&comment, cli.json);
