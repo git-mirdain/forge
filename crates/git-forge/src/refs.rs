@@ -113,6 +113,34 @@ pub fn read_config_subtree(repo: &Repository, path: &str) -> Result<BTreeMap<Str
     Ok(map)
 }
 
+/// Recursively walk a git tree, collecting `(path, blob_oid)` pairs.
+pub fn walk_tree(
+    repo: &Repository,
+    tree: &git2::Tree<'_>,
+    prefix: &str,
+    out: &mut Vec<(String, String)>,
+) {
+    for entry in tree {
+        let name = entry.name().unwrap_or("");
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        match entry.kind() {
+            Some(ObjectType::Blob) => {
+                out.push((path, entry.id().to_string()));
+            }
+            Some(ObjectType::Tree) => {
+                if let Ok(subtree) = repo.find_tree(entry.id()) {
+                    walk_tree(repo, &subtree, &path, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Build a tree, inserting `leaf_oid` as a blob at `parts[0]/parts[1]/.../leaf`.
 ///
 /// # Errors

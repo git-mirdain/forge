@@ -17,6 +17,7 @@ use crate::comment::{
     resolve_comment, review_comment_ref,
 };
 use crate::issue::{Issue, IssueState};
+use crate::refs::walk_tree;
 use crate::review::{Review, ReviewState, ReviewTarget};
 use crate::{Error, Result, Store};
 
@@ -2003,33 +2004,6 @@ fn review_target_files(repo: &git2::Repository, review: &Review) -> Result<Vec<(
         _ => {}
     }
     Ok(files)
-}
-
-fn walk_tree(
-    repo: &git2::Repository,
-    tree: &git2::Tree<'_>,
-    prefix: &str,
-    out: &mut Vec<(String, String)>,
-) {
-    for entry in tree {
-        let name = entry.name().unwrap_or("");
-        let path = if prefix.is_empty() {
-            name.to_string()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        match entry.kind() {
-            Some(git2::ObjectType::Blob) => {
-                out.push((path, entry.id().to_string()));
-            }
-            Some(git2::ObjectType::Tree) => {
-                if let Ok(subtree) = repo.find_tree(entry.id()) {
-                    walk_tree(repo, &subtree, &path, out);
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 /// Recursively hash a working-tree directory into the object store as a tree.
