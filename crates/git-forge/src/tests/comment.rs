@@ -72,7 +72,7 @@ fn roundtrip_object_anchor_with_range() {
         path: None,
         range: Some("10-20".to_string()),
     };
-    let trailers = format_trailers(Some(&anchor), false, None);
+    let trailers = format_trailers(Some(&anchor), false, None, None);
     let msg = format!("comment body\n\n{trailers}");
     let (body, parsed) = parse_trailers(&msg);
     assert_eq!(body, "comment body");
@@ -87,7 +87,7 @@ fn roundtrip_commit_range_anchor() {
         start: "aaa".to_string(),
         end: "bbb".to_string(),
     };
-    let trailers = format_trailers(Some(&anchor), false, None);
+    let trailers = format_trailers(Some(&anchor), false, None, None);
     let msg = format!("comment body\n\n{trailers}");
     let (body, parsed) = parse_trailers(&msg);
     assert_eq!(body, "comment body");
@@ -103,7 +103,7 @@ fn roundtrip_all_trailers() {
         path: None,
         range: Some("5-10".to_string()),
     };
-    let trailers = format_trailers(Some(&anchor), true, Some("orig123"));
+    let trailers = format_trailers(Some(&anchor), true, Some("orig123"), None);
     let msg = format!("multi-paragraph\n\nbody text\n\n{trailers}");
     let (body, parsed) = parse_trailers(&msg);
     assert_eq!(body, "multi-paragraph\n\nbody text");
@@ -115,7 +115,7 @@ fn roundtrip_all_trailers() {
 
 #[test]
 fn roundtrip_no_trailers() {
-    let trailers = format_trailers(None, false, None);
+    let trailers = format_trailers(None, false, None, None);
     assert!(trailers.is_empty());
     let (body, parsed) = parse_trailers("just a body");
     assert_eq!(body, "just a body");
@@ -145,7 +145,7 @@ fn roundtrip_object_anchor_with_path() {
         path: Some("src/main.rs".to_string()),
         range: Some("42-47".to_string()),
     };
-    let trailers = format_trailers(Some(&anchor), false, None);
+    let trailers = format_trailers(Some(&anchor), false, None, None);
     let msg = format!("body\n\n{trailers}");
     let (body, parsed) = parse_trailers(&msg);
     assert_eq!(body, "body");
@@ -161,10 +161,35 @@ fn roundtrip_object_anchor_no_range() {
         path: None,
         range: None,
     };
-    let trailers = format_trailers(Some(&anchor), false, None);
+    let trailers = format_trailers(Some(&anchor), false, None, None);
     let msg = format!("body\n\n{trailers}");
     let (body, parsed) = parse_trailers(&msg);
     assert_eq!(body, "body");
     assert_eq!(parsed.get("Anchor").unwrap(), "asdfhjkl");
     assert!(!parsed.contains_key("Anchor-Range"));
+}
+
+#[test]
+fn parse_trailers_migrated_from() {
+    let msg = "migrated comment\n\nMigrated-From: deadbeef";
+    let (body, trailers) = parse_trailers(msg);
+    assert_eq!(body, "migrated comment");
+    assert_eq!(trailers.get("Migrated-From").unwrap(), "deadbeef");
+}
+
+#[test]
+fn roundtrip_migrated_from_with_anchor() {
+    let anchor = Anchor::Object {
+        oid: "newblob".to_string(),
+        path: Some("src/lib.rs".to_string()),
+        range: Some("22-25".to_string()),
+    };
+    let trailers = format_trailers(Some(&anchor), false, None, Some("oldcomment123"));
+    let msg = format!("body\n\n{trailers}");
+    let (body, parsed) = parse_trailers(&msg);
+    assert_eq!(body, "body");
+    assert_eq!(parsed.get("Anchor").unwrap(), "newblob");
+    assert_eq!(parsed.get("Anchor-Path").unwrap(), "src/lib.rs");
+    assert_eq!(parsed.get("Anchor-Range").unwrap(), "22-25");
+    assert_eq!(parsed.get("Migrated-From").unwrap(), "oldcomment123");
 }

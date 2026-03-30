@@ -51,6 +51,8 @@ pub struct Comment {
     pub resolved: bool,
     /// OID of the original comment this replaces (edit marker).
     pub replaces: Option<String>,
+    /// OID of the comment this was migrated from (cross-chain carry-forward).
+    pub migrated_from: Option<String>,
     /// OID of the comment this is a reply to.
     pub reply_to: Option<String>,
     /// Tree OID of the chain commit.
@@ -75,9 +77,15 @@ pub fn object_comment_ref(oid: &str) -> String {
     format!("{OBJECT_COMMENTS_PREFIX}{oid}")
 }
 
-/// Build a trailer block from anchor, resolved flag, and replaces OID.
+/// Build a trailer block from anchor, resolved flag, replaces OID, and
+/// migrated-from OID.
 #[must_use]
-pub fn format_trailers(anchor: Option<&Anchor>, resolved: bool, replaces: Option<&str>) -> String {
+pub fn format_trailers(
+    anchor: Option<&Anchor>,
+    resolved: bool,
+    replaces: Option<&str>,
+    migrated_from: Option<&str>,
+) -> String {
     let mut lines: Vec<String> = Vec::new();
     if let Some(a) = anchor {
         match a {
@@ -102,6 +110,9 @@ pub fn format_trailers(anchor: Option<&Anchor>, resolved: bool, replaces: Option
     if let Some(oid) = replaces {
         lines.push(format!("Replaces: {oid}"));
     }
+    if let Some(oid) = migrated_from {
+        lines.push(format!("Migrated-From: {oid}"));
+    }
     lines.join("\n")
 }
 
@@ -113,6 +124,7 @@ const KNOWN_TRAILER_KEYS: &[&str] = &[
     "Anchor-End",
     "Resolved",
     "Replaces",
+    "Migrated-From",
     "Github-Id",
 ];
 
@@ -191,6 +203,7 @@ pub fn comment_from_chain_entry(repo: &Repository, entry: &ChainEntry) -> Result
 
     let resolved = trailers.get("Resolved").is_some_and(|v| v == "true");
     let replaces = trailers.get("Replaces").cloned();
+    let migrated_from = trailers.get("Migrated-From").cloned();
 
     Ok(Comment {
         oid: entry.commit.to_string(),
@@ -201,6 +214,7 @@ pub fn comment_from_chain_entry(repo: &Repository, entry: &ChainEntry) -> Result
         anchor,
         resolved,
         replaces,
+        migrated_from,
         reply_to,
         tree: entry.tree.to_string(),
     })
@@ -226,7 +240,7 @@ pub fn add_comment(
     body: &str,
     anchor: Option<&Anchor>,
 ) -> Result<Comment> {
-    let trailers = format_trailers(anchor, false, None);
+    let trailers = format_trailers(anchor, false, None, None);
     let message = build_message(body, &trailers);
     let tree = repo.build_tree(&[])?;
     let entry = repo.append(ref_name, &message, tree, None)?;
@@ -261,7 +275,7 @@ pub fn add_reply(
     reply_to_oid: &str,
     anchor: Option<&Anchor>,
 ) -> Result<Comment> {
-    let trailers = format_trailers(anchor, false, None);
+    let trailers = format_trailers(anchor, false, None, None);
     let message = build_message(body, &trailers);
     let tree = repo.build_tree(&[])?;
     let parent = resolve_comment_oid(repo, ref_name, reply_to_oid)?;
@@ -280,7 +294,7 @@ pub fn resolve_comment(
     message: Option<&str>,
 ) -> Result<Comment> {
     let body = message.unwrap_or("");
-    let trailers = format_trailers(None, true, None);
+    let trailers = format_trailers(None, true, None, None);
     let msg = build_message(body, &trailers);
     let tree = repo.build_tree(&[])?;
     let parent = resolve_comment_oid(repo, ref_name, reply_to_oid)?;
@@ -301,7 +315,7 @@ pub fn edit_comment(
 ) -> Result<Comment> {
     let parent = resolve_comment_oid(repo, ref_name, original_oid)?;
     let parent_str = parent.to_string();
-    let trailers = format_trailers(anchor, false, Some(&parent_str));
+    let trailers = format_trailers(anchor, false, Some(&parent_str), None);
     let message = build_message(new_body, &trailers);
     let tree = repo.build_tree(&[])?;
     let entry = repo.append(ref_name, &message, tree, Some(parent))?;
@@ -331,4 +345,23 @@ pub fn list_thread(repo: &Repository, ref_name: &str, root_oid: &str) -> Result<
         .iter()
         .map(|e| comment_from_chain_entry(repo, e))
         .collect()
+}
+
+/// Migrate a comment to a different chain, recording the original OID via
+/// the `Migrated-From` trailer.
+///
+/// # Errors
+/// Returns an error if the git operation fails.
+pub fn migrate_comment(
+    repo: &Repository,
+    target_ref: &str,
+    body: &str,
+    anchor: Option<&Anchor>,
+    migrated_from: &str,
+) -> Result<Comment> {
+    let trailers = format_trailers(anchor, false, None, Some(migrated_from));
+    let message = build_message(body, &trailers);
+    let tree = repo.build_tree(&[])?;
+    let entry = repo.append(target_ref, &message, tree, None)?;
+    comment_from_chain_entry(repo, &entry)
 }
