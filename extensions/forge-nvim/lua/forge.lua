@@ -112,14 +112,25 @@ local function submit(buf, win, argv)
   local cmd = vim.list_extend(vim.list_slice(argv), { "-f", tmpfile })
   close_win(win)
 
+  local stderr_lines = {}
   vim.fn.jobstart(cmd, {
+    stderr_buffered = true,
+    on_stderr = function(_, data)
+      for _, line in ipairs(data) do
+        if line ~= "" then table.insert(stderr_lines, line) end
+      end
+    end,
     on_exit = function(_, code)
       vim.schedule(function()
         vim.fn.delete(tmpfile)
         if code == 0 then
           vim.notify("forge: comment submitted", vim.log.levels.INFO)
         else
-          vim.notify("forge: comment failed (exit " .. code .. ")", vim.log.levels.ERROR)
+          local msg = "forge: comment failed (exit " .. code .. ")"
+          if #stderr_lines > 0 then
+            msg = msg .. "\n" .. table.concat(stderr_lines, "\n")
+          end
+          vim.notify(msg, vim.log.levels.ERROR)
         end
       end)
     end,
@@ -215,13 +226,24 @@ end
 function M.resolve()
   vim.ui.input({ prompt = "Resolve thread OID: " }, function(oid)
     if not oid or oid == "" then return end
+    local stderr_lines = {}
     vim.fn.jobstart({ "forge", "comment", "resolve", "--thread", oid }, {
+      stderr_buffered = true,
+      on_stderr = function(_, data)
+        for _, line in ipairs(data) do
+          if line ~= "" then table.insert(stderr_lines, line) end
+        end
+      end,
       on_exit = function(_, code)
         vim.schedule(function()
           if code == 0 then
             vim.notify("forge: thread resolved", vim.log.levels.INFO)
           else
-            vim.notify("forge: resolve failed (exit " .. code .. ")", vim.log.levels.ERROR)
+            local msg = "forge: resolve failed (exit " .. code .. ")"
+            if #stderr_lines > 0 then
+              msg = msg .. "\n" .. table.concat(stderr_lines, "\n")
+            end
+            vim.notify(msg, vim.log.levels.ERROR)
           end
         end)
       end,
