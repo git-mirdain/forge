@@ -145,7 +145,7 @@ fn try_pin_fields(repo: &Repository, target: &ReviewTarget) -> Vec<(String, Vec<
 fn object_file_mode(kind: Option<ObjectType>) -> FileMode {
     match kind {
         Some(ObjectType::Tree) => FileMode::Tree,
-        Some(ObjectType::Commit) => FileMode::Link, // gitlink / 160000
+        Some(ObjectType::Commit) => FileMode::Commit,
         _ => FileMode::Blob,
     }
 }
@@ -179,11 +179,9 @@ fn fixup_pin_entries(repo: &Repository, review_oid: &str, target: &ReviewTarget)
         return Ok(());
     }
 
-    // Build the objects/ subtree with correct OIDs.
-    //
-    // Blobs and trees can be referenced directly — this prevents `git gc`
-    // from collecting them. Commits cannot be stored as gitlinks in a
-    // subtree, so we fall back to storing the OID hex as blob content.
+    // Build the objects/ subtree with correct OIDs and modes.
+    // Blobs get mode 100644, trees get 040000, commits get 160000 (gitlink).
+    // All three modes create a direct reference to the object, preventing GC.
     let existing_objects = root_tree.get_name("objects").and_then(|e| {
         if e.kind() == Some(ObjectType::Tree) {
             repo.find_tree(e.id()).ok()
@@ -193,17 +191,7 @@ fn fixup_pin_entries(repo: &Repository, review_oid: &str, target: &ReviewTarget)
     });
     let mut obj_builder = repo.treebuilder(existing_objects.as_ref())?;
     for (name, oid, mode) in &pins {
-        match mode {
-            FileMode::Blob | FileMode::Tree => {
-                obj_builder.insert(name, *oid, i32::from(*mode))?;
-            }
-            _ => {
-                // Commits: store OID hex as blob content (records the target
-                // but cannot prevent GC via tree reference).
-                let content_oid = repo.blob(oid.to_string().as_bytes())?;
-                obj_builder.insert(name, content_oid, 0o100_644)?;
-            }
-        }
+        obj_builder.insert(name, *oid, i32::from(*mode))?;
     }
     let obj_tree_oid = obj_builder.write()?;
 

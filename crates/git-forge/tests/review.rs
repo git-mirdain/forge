@@ -386,10 +386,11 @@ fn pin_entry_blob_references_actual_object() {
 }
 
 #[test]
-fn pin_entry_commit_stores_oid_content() {
+fn pin_entry_commit_references_actual_object() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let commit = head_oid(&repo);
+    let commit_oid = git2::Oid::from_str(&commit).unwrap();
     let target = ReviewTarget {
         head: commit.clone(),
         base: None,
@@ -405,9 +406,9 @@ fn pin_entry_commit_stores_oid_content() {
         .get_path(std::path::Path::new(&format!("objects/{commit}")))
         .unwrap();
 
-    // For commits, the tree entry is a blob containing the OID hex string.
-    let pinned_blob = repo.find_blob(entry.id()).unwrap();
-    assert_eq!(std::str::from_utf8(pinned_blob.content()).unwrap(), commit);
+    // The tree entry OID must equal the actual commit OID (gitlink mode).
+    assert_eq!(entry.id(), commit_oid);
+    assert_eq!(entry.filemode(), 0o160_000);
 }
 
 // ---------------------------------------------------------------------------
