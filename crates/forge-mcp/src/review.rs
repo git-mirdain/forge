@@ -6,7 +6,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use git_forge::Store;
-use git_forge::comment::{list_comments, review_comment_ref};
+use git_forge::comment::{list_comments, object_comment_ref, review_comment_ref};
+use git_forge::refs::walk_tree;
 use git_forge::review::ReviewState;
 
 use crate::server::ForgeMcpServer;
@@ -84,10 +85,49 @@ impl ForgeMcpServer {
             Ok(r) => r,
             Err(e) => return format!("error: {e}"),
         };
-        let ref_name = review_comment_ref(&review.oid);
-        match list_comments(&repo, &ref_name) {
-            Ok(comments) => facet_json::to_string_pretty(&comments).expect("serialize"),
-            Err(e) => format!("error: {e}"),
+
+        let mut comments = Vec::new();
+
+        // Collect blob-anchored comments from object chains.
+        if let Ok(oid) = git2::Oid::from_str(&review.target.head)
+            && let Ok(obj) = repo.find_object(oid, None)
+        {
+            let mut files = Vec::new();
+            match obj.kind() {
+                Some(git2::ObjectType::Blob) => {
+                    files.push(("(blob)".to_string(), review.target.head.clone()));
+                }
+                Some(git2::ObjectType::Tree) => {
+                    if let Ok(tree) = repo.find_tree(oid) {
+                        walk_tree(&repo, &tree, "", &mut files);
+                    }
+                }
+                Some(git2::ObjectType::Commit) => {
+                    if let Ok(commit) = repo.find_commit(oid)
+                        && let Ok(tree) = commit.tree()
+                    {
+                        walk_tree(&repo, &tree, "", &mut files);
+                    }
+                }
+                _ => {}
+            }
+            let mut seen = std::collections::HashSet::new();
+            for (_, blob_oid) in &files {
+                if !seen.insert(blob_oid.clone()) {
+                    continue;
+                }
+                if let Ok(cs) = list_comments(&repo, &object_comment_ref(blob_oid)) {
+                    comments.extend(cs);
+                }
+            }
         }
+
+        // Collect review-level (unanchored) comments.
+        if let Ok(cs) = list_comments(&repo, &review_comment_ref(&review.oid)) {
+            comments.extend(cs);
+        }
+
+        comments.sort_by_key(|c| c.timestamp);
+        facet_json::to_string_pretty(&comments).expect("serialize")
     }
 }
