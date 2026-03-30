@@ -85,6 +85,38 @@ pub enum ConfigCommand {
         /// Repository name.
         repo: String,
     },
+    /// Manage contributors.
+    Contributor {
+        /// Contributor subcommand.
+        #[command(subcommand)]
+        command: ContributorCommand,
+    },
+}
+
+/// Contributor subcommands.
+#[derive(Subcommand, Debug)]
+pub enum ContributorCommand {
+    /// Register a contributor.
+    Add {
+        /// Contributor ID (defaults to git user name).
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Email addresses (defaults to git user email).
+        #[arg(long = "email", short = 'e')]
+        emails: Vec<String>,
+
+        /// Display names (defaults to git user name).
+        #[arg(long = "name", short = 'n')]
+        names: Vec<String>,
+    },
+    /// List all contributors.
+    List,
+    /// Remove a contributor.
+    Remove {
+        /// Contributor ID.
+        id: String,
+    },
 }
 
 /// Comment subcommands.

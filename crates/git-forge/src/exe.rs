@@ -29,6 +29,17 @@ pub struct ConfigEntry {
     sigils: BTreeMap<String, String>,
 }
 
+/// A contributor identity stored in the forge config.
+#[derive(Facet)]
+pub struct Contributor {
+    /// The contributor's unique identifier (typically the git user name).
+    pub id: String,
+    /// Known email addresses.
+    pub emails: Vec<String>,
+    /// Known display names.
+    pub names: Vec<String>,
+}
+
 /// Owns a [`Repository`] and executes forge operations.
 pub struct Executor {
     repo: Repository,
@@ -233,6 +244,7 @@ impl Executor {
     /// # Errors
     /// Returns an error if the review does not exist or a git operation fails.
     pub fn approve_review(&self, reference: &str, message: Option<&str>) -> Result<Review> {
+        self.ensure_contributor()?;
         self.store().approve_review(reference, message)
     }
 
@@ -415,6 +427,131 @@ impl Executor {
         Ok(entries)
     }
 
+    /// Ensure the current git user is registered as a contributor.
+    ///
+    /// If a contributor entry already contains the current email, this is a
+    /// no-op. Otherwise the user's name and email are appended to their
+    /// contributor record (creating it if necessary).
+    ///
+    /// # Errors
+    /// Returns an error if `user.name` or `user.email` is not configured.
+    fn ensure_contributor(&self) -> Result<()> {
+        let cfg = self.repo.config()?;
+        let name = cfg
+            .get_string("user.name")
+            .map_err(|_| Error::Config("user.name not set".into()))?;
+        let email = cfg
+            .get_string("user.email")
+            .map_err(|_| Error::Config("user.email not set".into()))?;
+
+        let emails =
+            crate::refs::read_config_subtree(&self.repo, &format!("contributors/{name}/emails"))?;
+        if emails.contains_key(&email) {
+            return Ok(());
+        }
+
+        self.contributor_add(&name, &[email.as_str()], &[name.as_str()])
+    }
+
+    /// Register a contributor with explicit emails and names.
+    ///
+    /// Entries are additive — calling this again with the same ID appends
+    /// new emails and names without removing existing ones.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn contributor_add(&self, id: &str, emails: &[&str], names: &[&str]) -> Result<()> {
+        for email in emails {
+            crate::refs::write_config_blob(
+                &self.repo,
+                &format!("contributors/{id}/emails/{email}"),
+                "",
+            )?;
+        }
+        for name in names {
+            crate::refs::write_config_blob(
+                &self.repo,
+                &format!("contributors/{id}/names/{name}"),
+                "",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// List all registered contributors.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn contributor_list(&self) -> Result<Vec<Contributor>> {
+        let reference = match self.repo.find_reference(crate::refs::CONFIG) {
+            Ok(r) => r,
+            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let root_tree = reference.peel_to_commit()?.tree()?;
+        let contrib_entry = match root_tree.get_path(std::path::Path::new("contributors")) {
+            Ok(e) => e,
+            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let contrib_tree = self.repo.find_tree(contrib_entry.id())?;
+
+        let mut contributors = Vec::new();
+        for entry in &contrib_tree {
+            if entry.kind() != Some(ObjectType::Tree) {
+                continue;
+            }
+            let Some(id) = entry.name() else { continue };
+            let emails =
+                crate::refs::read_config_subtree(&self.repo, &format!("contributors/{id}/emails"))?;
+            let names =
+                crate::refs::read_config_subtree(&self.repo, &format!("contributors/{id}/names"))?;
+            contributors.push(Contributor {
+                id: id.to_string(),
+                emails: emails.into_keys().collect(),
+                names: names.into_keys().collect(),
+            });
+        }
+        Ok(contributors)
+    }
+
+    /// Remove a contributor by ID.
+    ///
+    /// # Errors
+    /// Returns an error if the contributor does not exist.
+    pub fn contributor_remove(&self, id: &str) -> Result<()> {
+        let reference = self
+            .repo
+            .find_reference(crate::refs::CONFIG)
+            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
+        let parent = reference.peel_to_commit()?;
+        let root_tree = parent.tree()?;
+
+        let contrib_entry = root_tree
+            .get_path(std::path::Path::new("contributors"))
+            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
+        let contrib_tree = self.repo.find_tree(contrib_entry.id())?;
+        let mut builder = self.repo.treebuilder(Some(&contrib_tree))?;
+        builder
+            .remove(id)
+            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
+
+        let new_contrib_oid = builder.write()?;
+        let root_oid =
+            rebuild_tree_upward(&self.repo, &root_tree, &["contributors"], new_contrib_oid)?;
+        let new_root = self.repo.find_tree(root_oid)?;
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(crate::refs::CONFIG),
+            &sig,
+            &sig,
+            "forge: remove contributor",
+            &new_root,
+            &[&parent],
+        )?;
+        Ok(())
+    }
+
     /// Remove a provider config entry.
     ///
     /// # Errors
@@ -588,7 +725,9 @@ impl Executor {
     /// Panics if facet-json fails to serialize a value (indicates a bug).
     #[allow(clippy::too_many_lines)]
     pub fn run(&self, cli: &crate::cli::Cli) -> Result<()> {
-        use crate::cli::{Command, CommentCommand, ConfigCommand, IssueCommand, ReviewCommand};
+        use crate::cli::{
+            Command, CommentCommand, ConfigCommand, ContributorCommand, IssueCommand, ReviewCommand,
+        };
 
         match &cli.command {
             Command::Config { command } => match command {
@@ -653,6 +792,61 @@ impl Executor {
                         println!("removed {provider}/{owner}/{repo}");
                     }
                 }
+
+                ConfigCommand::Contributor { command } => match command {
+                    ContributorCommand::Add { id, emails, names } => {
+                        let sig = self.repo.signature()?;
+                        let sig_name = sig.name().unwrap_or("unknown");
+                        let sig_email = sig.email().unwrap_or("unknown");
+
+                        let id = id.as_deref().unwrap_or(sig_name);
+                        let default_emails;
+                        let emails: Vec<&str> = if emails.is_empty() {
+                            default_emails = [sig_email.to_string()];
+                            default_emails.iter().map(String::as_str).collect()
+                        } else {
+                            emails.iter().map(String::as_str).collect()
+                        };
+                        let default_names;
+                        let names: Vec<&str> = if names.is_empty() {
+                            default_names = [sig_name.to_string()];
+                            default_names.iter().map(String::as_str).collect()
+                        } else {
+                            names.iter().map(String::as_str).collect()
+                        };
+
+                        self.contributor_add(id, &emails, &names)?;
+                        if !cli.json {
+                            println!("added contributor {id}");
+                        }
+                    }
+
+                    ContributorCommand::List => {
+                        let contributors = self.contributor_list()?;
+                        if cli.json {
+                            println!(
+                                "{}",
+                                facet_json::to_string_pretty(&contributors).expect("serialize")
+                            );
+                        } else {
+                            for c in &contributors {
+                                println!(
+                                    "{}  emails={} names={}",
+                                    c.id,
+                                    c.emails.join(","),
+                                    c.names.join(","),
+                                );
+                            }
+                        }
+                    }
+
+                    ContributorCommand::Remove { id } => {
+                        self.contributor_remove(id)?;
+                        if !cli.json {
+                            println!("removed contributor {id}");
+                        }
+                    }
+                },
             },
 
             Command::Comment { command } => match command {
