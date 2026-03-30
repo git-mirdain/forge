@@ -474,6 +474,45 @@ impl Store<'_> {
         review_from_entry(&entry, display_id)
     }
 
+    /// Update a review's target head to a new OID.
+    ///
+    /// Returns the old head OID and the updated review so the caller can diff
+    /// trees and migrate carry-forward comments.
+    ///
+    /// # Errors
+    /// Returns an error if the review does not exist or a git operation fails.
+    pub fn retarget_review(&self, oid_or_id: &str, new_head: &str) -> Result<(String, Review)> {
+        let index = read_index(self.repo, REVIEW_INDEX)?;
+        let known_oids = self.repo.list(REVIEW_PREFIX)?;
+        let oid = resolve_oid(index.as_ref(), &known_oids, oid_or_id)?;
+        let ref_name = format!("{REVIEW_PREFIX}{oid}");
+        let entry = self.repo.read(&ref_name)?;
+        let display_id = display_id_for_oid(index.as_ref(), &oid);
+        let old_review = review_from_entry(&entry, display_id.clone())?;
+        let old_head = old_review.target.head.clone();
+
+        let new_target = ReviewTarget {
+            head: new_head.to_string(),
+            base: old_review.target.base.clone(),
+        };
+        let pin = pin_fields(self.repo, &new_target)?;
+
+        let mut mutations: Vec<Mutation<'_>> =
+            vec![Mutation::Set("meta/target/head", new_head.as_bytes())];
+        let pin_refs: Vec<(&str, &[u8])> = pin
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_slice()))
+            .collect();
+        for (k, v) in &pin_refs {
+            mutations.push(Mutation::Set(k, v));
+        }
+
+        let entry = self.repo.update(&ref_name, &mutations, "retarget review")?;
+        fixup_pin_entries(self.repo, &oid, &new_target)?;
+        let review = review_from_entry(&entry, display_id)?;
+        Ok((old_head, review))
+    }
+
     /// Record an approval on a review from the current git user.
     ///
     /// The approval is stored as `approvals/<name>` in the review's ledger

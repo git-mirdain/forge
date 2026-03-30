@@ -402,6 +402,16 @@ pub enum ReviewCommand {
         /// Display ID or OID prefix (inferred from active worktree if omitted).
         reference: Option<String>,
     },
+
+    /// Retarget a review to a new head, migrating carry-forward comments.
+    Retarget {
+        /// Display ID or OID prefix.
+        reference: String,
+
+        /// New head object OID or ref.
+        #[arg(long)]
+        head: String,
+    },
 }
 
 /// Issue subcommands.

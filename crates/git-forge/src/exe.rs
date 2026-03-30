@@ -257,6 +257,19 @@ impl Executor {
         self.store().revoke_approval(reference)
     }
 
+    /// Retarget a review to a new head, migrating carry-forward comments.
+    ///
+    /// Returns the updated review and the number of migrated comments.
+    ///
+    /// # Errors
+    /// Returns an error if the review does not exist or a git operation fails.
+    pub fn retarget_review(&self, reference: &str, new_head: &str) -> Result<(Review, usize)> {
+        let resolved_head = resolve_to_oid(&self.repo, new_head)?;
+        let (old_head, review) = self.store().retarget_review(reference, &resolved_head)?;
+        let migrated = migrate_carry_forward_comments(&self.repo, &old_head, &resolved_head)?;
+        Ok((review, migrated))
+    }
+
     // -----------------------------------------------------------------------
     // Review comments
     // -----------------------------------------------------------------------
@@ -1631,6 +1644,22 @@ impl Executor {
                         println!("Removed review worktree for {label}");
                     }
                 }
+
+                ReviewCommand::Retarget { reference, head } => {
+                    let (review, migrated) = self.retarget_review(reference, head)?;
+                    if cli.json {
+                        print_review(&review, true);
+                    } else {
+                        let label = review
+                            .display_id
+                            .as_deref()
+                            .unwrap_or(&review.oid[..review.oid.len().min(12)]);
+                        println!("Retargeted review {label} to {}", &head);
+                        if migrated > 0 {
+                            println!("Migrated {migrated} carry-forward comment(s).");
+                        }
+                    }
+                }
             },
 
             Command::Issue { command } => match command {
@@ -2025,7 +2054,210 @@ fn print_review(review: &Review, json: bool) {
     }
 }
 
-/// Walk the review's target object and return `(path, blob_oid)` pairs.
+/// Resolve a ref-or-oid string to a 40-char hex OID.
+fn resolve_to_oid(repo: &Repository, spec: &str) -> Result<String> {
+    if let Ok(oid) = git2::Oid::from_str(spec)
+        && spec.len() == 40
+    {
+        return Ok(oid.to_string());
+    }
+    let obj = repo.revparse_single(spec)?;
+    Ok(obj.id().to_string())
+}
+
+/// Collect `(path, blob_oid)` pairs from an object that may be a tree, commit,
+/// or blob.
+fn collect_blob_map(
+    repo: &Repository,
+    head_oid: &str,
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut map = std::collections::HashMap::new();
+    let Ok(oid) = git2::Oid::from_str(head_oid) else {
+        return Ok(map);
+    };
+    let Ok(obj) = repo.find_object(oid, None) else {
+        return Ok(map);
+    };
+    match obj.kind() {
+        Some(ObjectType::Blob) => {
+            map.insert("(blob)".to_string(), head_oid.to_string());
+        }
+        Some(ObjectType::Tree) => {
+            let tree = repo.find_tree(oid)?;
+            let mut files = Vec::new();
+            walk_tree(repo, &tree, "", &mut files);
+            for (path, blob_oid) in files {
+                map.insert(path, blob_oid);
+            }
+        }
+        Some(ObjectType::Commit) => {
+            let commit = repo.find_commit(oid)?;
+            let tree = commit.tree()?;
+            let mut files = Vec::new();
+            walk_tree(repo, &tree, "", &mut files);
+            for (path, blob_oid) in files {
+                map.insert(path, blob_oid);
+            }
+        }
+        _ => {}
+    }
+    Ok(map)
+}
+
+/// Find the line range in `new_content` where `context` (lines from the old
+/// blob) appears unchanged.
+///
+/// Returns `Some((new_start, new_end))` (1-based, inclusive) if the exact
+/// sequence of lines is found, `None` otherwise.
+fn find_context_in_blob(old_content: &str, range: &str, new_content: &str) -> Option<String> {
+    let (start, end) = parse_line_range(range)?;
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    if start == 0 || end == 0 || start > old_lines.len() || end > old_lines.len() || start > end {
+        return None;
+    }
+    let context: Vec<&str> = old_lines[start - 1..end].to_vec();
+    if context.is_empty() {
+        return None;
+    }
+
+    let new_lines: Vec<&str> = new_content.lines().collect();
+    let ctx_len = context.len();
+    for i in 0..=new_lines.len().saturating_sub(ctx_len) {
+        if new_lines[i..i + ctx_len] == context[..] {
+            let new_start = i + 1;
+            let new_end = i + ctx_len;
+            return Some(format!("{new_start}-{new_end}"));
+        }
+    }
+    None
+}
+
+/// Parse a line range string like `"42-47"` into `(start, end)`.
+fn parse_line_range(range: &str) -> Option<(usize, usize)> {
+    let (a, b) = range.split_once('-')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
+}
+
+/// Read a blob's content as a UTF-8 string.
+fn read_blob_content(repo: &Repository, oid_str: &str) -> Option<String> {
+    let oid = git2::Oid::from_str(oid_str).ok()?;
+    let blob = repo.find_blob(oid).ok()?;
+    String::from_utf8(blob.content().to_vec()).ok()
+}
+
+/// Migrate carry-forward comments from an old target head to a new one.
+///
+/// For each file that changed (different blob OID), checks whether comments
+/// anchored to the old blob can be found at the same context in the new blob.
+/// If so, a new comment is written to the new blob's object chain with
+/// `Migrated-From` linking back to the original.
+///
+/// Returns the total number of migrated comments.
+fn migrate_carry_forward_comments(
+    repo: &Repository,
+    old_head: &str,
+    new_head: &str,
+) -> Result<usize> {
+    use crate::comment::{Anchor, list_comments, migrate_comment, object_comment_ref};
+
+    let old_map = collect_blob_map(repo, old_head)?;
+    let new_map = collect_blob_map(repo, new_head)?;
+
+    // Invert old_map: blob_oid → [paths]
+    let mut old_oid_to_paths: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for (path, oid) in &old_map {
+        old_oid_to_paths
+            .entry(oid.clone())
+            .or_default()
+            .push(path.clone());
+    }
+
+    // Build path → new_blob_oid for quick lookup.
+    let mut migrated_count = 0;
+
+    for (path, old_oid) in &old_map {
+        let Some(new_oid) = new_map.get(path) else {
+            continue; // File deleted — comments stay on old blob.
+        };
+        if old_oid == new_oid {
+            continue; // Unchanged — nothing to migrate.
+        }
+
+        // Check for comments on the old blob.
+        let old_ref = object_comment_ref(old_oid);
+        let comments = match list_comments(repo, &old_ref) {
+            Ok(cs) => cs,
+            Err(Error::Git(e)) if e.code() == ErrorCode::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+
+        if comments.is_empty() {
+            continue;
+        }
+
+        let old_content = read_blob_content(repo, old_oid);
+        let new_content = read_blob_content(repo, new_oid);
+
+        let new_ref = object_comment_ref(new_oid);
+
+        for comment in &comments {
+            // Skip resolved comments and edits/migrations.
+            if comment.resolved || comment.replaces.is_some() || comment.migrated_from.is_some() {
+                continue;
+            }
+
+            let new_anchor = match &comment.anchor {
+                Some(Anchor::Object {
+                    range: Some(range),
+                    path: anchor_path,
+                    ..
+                }) => {
+                    // Try content-matching for ranged anchors.
+                    match (&old_content, &new_content) {
+                        (Some(old_c), Some(new_c)) => {
+                            if let Some(new_range) = find_context_in_blob(old_c, range, new_c) {
+                                Some(Anchor::Object {
+                                    oid: new_oid.clone(),
+                                    path: anchor_path.clone(),
+                                    range: Some(new_range),
+                                })
+                            } else {
+                                continue; // Context changed — comment does not carry forward.
+                            }
+                        }
+                        _ => continue, // Binary blobs — skip.
+                    }
+                }
+                Some(Anchor::Object {
+                    range: None,
+                    path: anchor_path,
+                    ..
+                }) => {
+                    // No line range — file-level comment, carry forward unconditionally.
+                    Some(Anchor::Object {
+                        oid: new_oid.clone(),
+                        path: anchor_path.clone(),
+                        range: None,
+                    })
+                }
+                _ => None, // Non-object anchor — carry forward as unanchored.
+            };
+
+            migrate_comment(
+                repo,
+                &new_ref,
+                &comment.body,
+                new_anchor.as_ref(),
+                &comment.oid,
+            )?;
+            migrated_count += 1;
+        }
+    }
+
+    Ok(migrated_count)
+}
+
 fn review_target_files(repo: &git2::Repository, review: &Review) -> Result<Vec<(String, String)>> {
     let Ok(oid) = git2::Oid::from_str(&review.target.head) else {
         return Ok(Vec::new());

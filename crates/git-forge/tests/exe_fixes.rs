@@ -8,6 +8,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use git_forge::Error;
+use git_forge::comment::Anchor;
 use git_forge::exe::Executor;
 use git_forge::review::ReviewTarget;
 
@@ -495,4 +496,235 @@ fn list_issues_works_on_dirty_worktree() {
     // list_issues should work fine on a dirty worktree.
     let issues = exec.list_issues(None).unwrap();
     assert!(issues.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// retarget: basic head update
+// ---------------------------------------------------------------------------
+
+/// Build a tree with a single blob at `name` containing `content`.
+fn make_tree(repo: &Repository, name: &str, content: &str) -> String {
+    let blob_oid = repo.blob(content.as_bytes()).unwrap();
+    let mut builder = repo.treebuilder(None).unwrap();
+    builder.insert(name, blob_oid, 0o100_644).unwrap();
+    builder.write().unwrap().to_string()
+}
+
+/// Build a tree with multiple `(name, content)` entries.
+fn make_tree_multi(repo: &Repository, files: &[(&str, &str)]) -> String {
+    let mut builder = repo.treebuilder(None).unwrap();
+    for (name, content) in files {
+        let blob_oid = repo.blob(content.as_bytes()).unwrap();
+        builder.insert(*name, blob_oid, 0o100_644).unwrap();
+    }
+    builder.write().unwrap().to_string()
+}
+
+#[test]
+fn retarget_updates_head() {
+    let (dir, repo) = test_repo();
+    let exec = Executor::from_path(dir.path()).unwrap();
+
+    let old_tree = make_tree(&repo, "lib.rs", "fn main() {}\n");
+    let target = ReviewTarget {
+        head: old_tree.clone(),
+        base: None,
+    };
+    let review = exec
+        .create_review("test review", "", &target, None)
+        .unwrap();
+
+    let new_tree = make_tree(&repo, "lib.rs", "fn main() { todo!() }\n");
+    let (updated, _) = exec.retarget_review(&review.oid, &new_tree).unwrap();
+    assert_eq!(updated.target.head, new_tree);
+    assert_ne!(updated.target.head, old_tree);
+}
+
+// ---------------------------------------------------------------------------
+// retarget: comment migration with content matching
+// ---------------------------------------------------------------------------
+
+#[test]
+fn retarget_migrates_carry_forward_comments() {
+    let (dir, repo) = test_repo();
+    let exec = Executor::from_path(dir.path()).unwrap();
+
+    // Old tree: two files, comment on line 2-3 of a.rs.
+    let old_tree = make_tree_multi(
+        &repo,
+        &[
+            ("a.rs", "line1\nline2\nline3\nline4\n"),
+            ("b.rs", "unchanged content\n"),
+        ],
+    );
+    let target = ReviewTarget {
+        head: old_tree.clone(),
+        base: None,
+    };
+    let review = exec
+        .create_review("migration test", "", &target, None)
+        .unwrap();
+
+    // Find the blob OID for a.rs in the old tree.
+    let old_tree_obj = repo
+        .find_tree(git2::Oid::from_str(&old_tree).unwrap())
+        .unwrap();
+    let old_a_blob = old_tree_obj.get_name("a.rs").unwrap().id().to_string();
+
+    // Add a comment anchored to blob a.rs at lines 2-3.
+    let anchor = Anchor::Object {
+        oid: old_a_blob.clone(),
+        path: Some("a.rs".to_string()),
+        range: Some("2-3".to_string()),
+    };
+    exec.add_review_comment(&review.oid, "needs refactor", Some(&anchor))
+        .unwrap();
+
+    // New tree: a.rs has a new first line but lines 2-3 are preserved.
+    // b.rs is unchanged.
+    let new_tree = make_tree_multi(
+        &repo,
+        &[
+            ("a.rs", "new_line1\nline2\nline3\nline4\n"),
+            ("b.rs", "unchanged content\n"),
+        ],
+    );
+
+    let (_, migrated) = exec.retarget_review(&review.oid, &new_tree).unwrap();
+    assert_eq!(migrated, 1, "one comment should be migrated");
+
+    // The migrated comment should appear when listing review comments.
+    let comments = exec.list_review_comments(&review.oid).unwrap();
+    assert!(!comments.is_empty(), "should have comments after retarget");
+
+    // Find the migrated comment (the one with migrated_from set).
+    let migrated_comment = comments.iter().find(|c| c.migrated_from.is_some()).unwrap();
+    assert_eq!(migrated_comment.body, "needs refactor");
+    assert_eq!(
+        migrated_comment.migrated_from.as_deref(),
+        Some(&*old_a_blob).map(|_| migrated_comment.migrated_from.as_deref().unwrap())
+    );
+
+    // Check the new anchor has updated range (shifted by 1 line).
+    if let Some(Anchor::Object { range, .. }) = &migrated_comment.anchor {
+        assert_eq!(range.as_deref(), Some("2-3"));
+    } else {
+        panic!("expected object anchor on migrated comment");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// retarget: comments on changed context are NOT migrated
+// ---------------------------------------------------------------------------
+
+#[test]
+fn retarget_drops_comments_on_changed_context() {
+    let (dir, repo) = test_repo();
+    let exec = Executor::from_path(dir.path()).unwrap();
+
+    let old_tree = make_tree(&repo, "a.rs", "line1\nline2\nline3\n");
+    let target = ReviewTarget {
+        head: old_tree.clone(),
+        base: None,
+    };
+    let review = exec.create_review("drop test", "", &target, None).unwrap();
+
+    let old_tree_obj = repo
+        .find_tree(git2::Oid::from_str(&old_tree).unwrap())
+        .unwrap();
+    let old_blob = old_tree_obj.get_name("a.rs").unwrap().id().to_string();
+
+    let anchor = Anchor::Object {
+        oid: old_blob.clone(),
+        path: Some("a.rs".to_string()),
+        range: Some("2-3".to_string()),
+    };
+    exec.add_review_comment(&review.oid, "old comment", Some(&anchor))
+        .unwrap();
+
+    // New tree: lines 2-3 have completely changed.
+    let new_tree = make_tree(&repo, "a.rs", "line1\nNEW2\nNEW3\n");
+    let (_, migrated) = exec.retarget_review(&review.oid, &new_tree).unwrap();
+    assert_eq!(
+        migrated, 0,
+        "comment should not migrate when context changed"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// retarget: file-level (no range) comments migrate unconditionally
+// ---------------------------------------------------------------------------
+
+#[test]
+fn retarget_migrates_file_level_comments() {
+    let (dir, repo) = test_repo();
+    let exec = Executor::from_path(dir.path()).unwrap();
+
+    let old_tree = make_tree(&repo, "a.rs", "old content\n");
+    let target = ReviewTarget {
+        head: old_tree.clone(),
+        base: None,
+    };
+    let review = exec
+        .create_review("file level test", "", &target, None)
+        .unwrap();
+
+    let old_tree_obj = repo
+        .find_tree(git2::Oid::from_str(&old_tree).unwrap())
+        .unwrap();
+    let old_blob = old_tree_obj.get_name("a.rs").unwrap().id().to_string();
+
+    let anchor = Anchor::Object {
+        oid: old_blob.clone(),
+        path: Some("a.rs".to_string()),
+        range: None,
+    };
+    exec.add_review_comment(&review.oid, "file-level note", Some(&anchor))
+        .unwrap();
+
+    let new_tree = make_tree(&repo, "a.rs", "completely new content\n");
+    let (_, migrated) = exec.retarget_review(&review.oid, &new_tree).unwrap();
+    assert_eq!(migrated, 1, "file-level comment should always migrate");
+}
+
+// ---------------------------------------------------------------------------
+// retarget: unchanged blobs keep comments without migration
+// ---------------------------------------------------------------------------
+
+#[test]
+fn retarget_unchanged_blobs_keep_comments() {
+    let (dir, repo) = test_repo();
+    let exec = Executor::from_path(dir.path()).unwrap();
+
+    let old_tree = make_tree_multi(&repo, &[("a.rs", "unchanged\n"), ("b.rs", "will change\n")]);
+    let target = ReviewTarget {
+        head: old_tree.clone(),
+        base: None,
+    };
+    let review = exec
+        .create_review("unchanged test", "", &target, None)
+        .unwrap();
+
+    let old_tree_obj = repo
+        .find_tree(git2::Oid::from_str(&old_tree).unwrap())
+        .unwrap();
+    let a_blob = old_tree_obj.get_name("a.rs").unwrap().id().to_string();
+
+    let anchor = Anchor::Object {
+        oid: a_blob.clone(),
+        path: Some("a.rs".to_string()),
+        range: Some("1-1".to_string()),
+    };
+    exec.add_review_comment(&review.oid, "stays put", Some(&anchor))
+        .unwrap();
+
+    // Only change b.rs.
+    let new_tree = make_tree_multi(&repo, &[("a.rs", "unchanged\n"), ("b.rs", "changed!\n")]);
+    let (_, migrated) = exec.retarget_review(&review.oid, &new_tree).unwrap();
+    assert_eq!(migrated, 0, "unchanged blob needs no migration");
+
+    let comments = exec.list_review_comments(&review.oid).unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].body, "stays put");
+    assert!(comments[0].migrated_from.is_none());
 }
