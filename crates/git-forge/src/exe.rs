@@ -1538,6 +1538,15 @@ impl Executor {
                             .as_deref()
                             .unwrap_or(&review.oid[..review.oid.len().min(12)]);
                         println!("Checked out review {label} to {}", wt_path.display());
+                        if std::io::stdin().is_terminal() {
+                            let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
+                            let status = std::process::Command::new(&shell)
+                                .current_dir(&wt_path)
+                                .status()?;
+                            if !status.success() {
+                                std::process::exit(status.code().unwrap_or(1));
+                            }
+                        }
                     }
                 }
 
