@@ -129,13 +129,14 @@ fn anchor_object_with_range() {
     let ref_name = issue_comment_ref("abc123");
     let anchor = Anchor::Object {
         oid: "asdfhjkl".to_string(),
+        path: None,
         range: Some("10-20".to_string()),
     };
     let comment = add_comment(&repo, &ref_name, "line comment", Some(&anchor)).unwrap();
 
     let a = comment.anchor.as_ref().unwrap();
     match a {
-        Anchor::Object { oid, range } => {
+        Anchor::Object { oid, range, .. } => {
             assert_eq!(oid, "asdfhjkl");
             assert_eq!(range.as_deref(), Some("10-20"));
         }
@@ -273,6 +274,7 @@ fn edit_preserves_anchor() {
     let ref_name = issue_comment_ref("abc123");
     let anchor = Anchor::Object {
         oid: "asdfhjkl".to_string(),
+        path: None,
         range: Some("5-10".to_string()),
     };
     let original = add_comment(&repo, &ref_name, "original", Some(&anchor)).unwrap();
@@ -281,7 +283,7 @@ fn edit_preserves_anchor() {
     assert_eq!(edited.body, "edited");
     assert_eq!(edited.replaces.as_deref(), Some(original.oid.as_str()));
     match edited.anchor.as_ref().unwrap() {
-        Anchor::Object { oid, range } => {
+        Anchor::Object { oid, range, .. } => {
             assert_eq!(oid, "asdfhjkl");
             assert_eq!(range.as_deref(), Some("5-10"));
         }
@@ -347,4 +349,34 @@ fn oid_prefix_not_found_errors() {
 
     let result = add_reply(&repo, &ref_name, "reply", "asdfhjkl", None);
     assert!(result.is_err());
+}
+
+// --- Anchor path roundtrip (issue 1 regression) ---
+
+#[test]
+fn anchor_object_with_path_roundtrips() {
+    let (_dir, repo) = test_repo();
+    let ref_name = issue_comment_ref("abc123");
+    let anchor = Anchor::Object {
+        oid: "abc123".to_string(),
+        path: Some("src/main.rs".to_string()),
+        range: Some("42-47".to_string()),
+    };
+    let comment = add_comment(&repo, &ref_name, "path comment", Some(&anchor)).unwrap();
+
+    match comment.anchor.as_ref().unwrap() {
+        Anchor::Object { oid, path, range } => {
+            assert_eq!(oid, "abc123");
+            assert_eq!(path.as_deref(), Some("src/main.rs"));
+            assert_eq!(range.as_deref(), Some("42-47"));
+        }
+        Anchor::CommitRange { .. } => panic!("expected Object anchor"),
+    }
+
+    // Also verify via list_comments roundtrip.
+    let all = list_comments(&repo, &ref_name).unwrap();
+    match all[0].anchor.as_ref().unwrap() {
+        Anchor::Object { path, .. } => assert_eq!(path.as_deref(), Some("src/main.rs")),
+        Anchor::CommitRange { .. } => panic!("expected Object anchor"),
+    }
 }

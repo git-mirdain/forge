@@ -69,6 +69,7 @@ fn parse_trailers_replaces() {
 fn roundtrip_object_anchor_with_range() {
     let anchor = Anchor::Object {
         oid: "asdfhjkl".to_string(),
+        path: None,
         range: Some("10-20".to_string()),
     };
     let trailers = format_trailers(Some(&anchor), false, None);
@@ -99,6 +100,7 @@ fn roundtrip_commit_range_anchor() {
 fn roundtrip_all_trailers() {
     let anchor = Anchor::Object {
         oid: "asdfhjkl".to_string(),
+        path: None,
         range: Some("5-10".to_string()),
     };
     let trailers = format_trailers(Some(&anchor), true, Some("orig123"));
@@ -137,9 +139,26 @@ fn parse_trailers_multiple_paragraphs_body() {
 }
 
 #[test]
+fn roundtrip_object_anchor_with_path() {
+    let anchor = Anchor::Object {
+        oid: "abc123".to_string(),
+        path: Some("src/main.rs".to_string()),
+        range: Some("42-47".to_string()),
+    };
+    let trailers = format_trailers(Some(&anchor), false, None);
+    let msg = format!("body\n\n{trailers}");
+    let (body, parsed) = parse_trailers(&msg);
+    assert_eq!(body, "body");
+    assert_eq!(parsed.get("Anchor").unwrap(), "abc123");
+    assert_eq!(parsed.get("Anchor-Path").unwrap(), "src/main.rs");
+    assert_eq!(parsed.get("Anchor-Range").unwrap(), "42-47");
+}
+
+#[test]
 fn roundtrip_object_anchor_no_range() {
     let anchor = Anchor::Object {
         oid: "asdfhjkl".to_string(),
+        path: None,
         range: None,
     };
     let trailers = format_trailers(Some(&anchor), false, None);

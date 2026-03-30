@@ -62,13 +62,13 @@ async fn sync_one(repo: &Repository, adapter: &GitHubAdapter) -> Result<()> {
     let cfg = &adapter.config;
     let label = format!("{}/{}", cfg.owner, cfg.repo);
 
-    let import = adapter.import_issues(repo).await?;
+    let import = adapter.import_all(repo).await?;
     eprintln!(
         "forge-server: import {label}: imported={} skipped={} failed={}",
         import.imported, import.skipped, import.failed,
     );
 
-    let export = adapter.export_issues(repo).await?;
+    let export = adapter.export_all(repo).await?;
     eprintln!(
         "forge-server: export {label}: exported={} skipped={} failed={}",
         export.exported, export.skipped, export.failed,

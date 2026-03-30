@@ -107,6 +107,60 @@ impl GitHubClient for MockClient {
     ) -> Result<u64> {
         Ok(0)
     }
+
+    async fn fetch_pulls(
+        &self,
+        _owner: &str,
+        _repo: &str,
+    ) -> Result<Vec<forge_github::client::GhPull>> {
+        Ok(Vec::new())
+    }
+
+    async fn fetch_review_comments(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _number: u64,
+    ) -> Result<Vec<forge_github::client::GhReviewComment>> {
+        Ok(Vec::new())
+    }
+
+    async fn create_pull(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _title: &str,
+        _body: &str,
+        _head: &str,
+        _base: &str,
+    ) -> Result<u64> {
+        Ok(0)
+    }
+
+    async fn update_pull(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _number: u64,
+        _title: Option<&str>,
+        _body: Option<&str>,
+        _state: Option<&str>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn create_review_comment(
+        &self,
+        _owner: &str,
+        _repo: &str,
+        _number: u64,
+        _body: &str,
+        _commit_id: &str,
+        _path: &str,
+        _line: u32,
+    ) -> Result<u64> {
+        Ok(0)
+    }
 }
 
 // ---------------------------------------------------------------------------

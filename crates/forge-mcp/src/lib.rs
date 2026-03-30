@@ -6,6 +6,7 @@
 mod comment;
 mod issue;
 mod prompt;
+mod review;
 mod server;
 
 pub use server::ForgeMcpServer;

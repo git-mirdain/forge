@@ -18,6 +18,8 @@ pub enum Anchor {
     Object {
         /// The target object OID.
         oid: String,
+        /// Optional file path within the target (for commit-anchored comments).
+        path: Option<String>,
         /// Optional line range, e.g. `"42-47"`.
         range: Option<String>,
     },
@@ -73,8 +75,11 @@ pub fn format_trailers(anchor: Option<&Anchor>, resolved: bool, replaces: Option
     let mut lines: Vec<String> = Vec::new();
     if let Some(a) = anchor {
         match a {
-            Anchor::Object { oid, range } => {
+            Anchor::Object { oid, path, range } => {
                 lines.push(format!("Anchor: {oid}"));
+                if let Some(p) = path {
+                    lines.push(format!("Anchor-Path: {p}"));
+                }
                 if let Some(r) = range {
                     lines.push(format!("Anchor-Range: {r}"));
                 }
@@ -97,6 +102,7 @@ pub fn format_trailers(anchor: Option<&Anchor>, resolved: bool, replaces: Option
 /// Known trailer keys recognized by the comment system.
 const KNOWN_TRAILER_KEYS: &[&str] = &[
     "Anchor",
+    "Anchor-Path",
     "Anchor-Range",
     "Anchor-End",
     "Resolved",
@@ -169,6 +175,7 @@ pub fn comment_from_chain_entry(repo: &Repository, entry: &ChainEntry) -> Result
         } else {
             Some(Anchor::Object {
                 oid: anchor_oid.clone(),
+                path: trailers.get("Anchor-Path").cloned(),
                 range: trailers.get("Anchor-Range").cloned(),
             })
         }

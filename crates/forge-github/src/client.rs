@@ -58,6 +58,58 @@ pub struct GhUser {
     pub login: String,
 }
 
+/// A GitHub pull request as returned by the list/get API.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GhPull {
+    /// GitHub PR number.
+    pub number: u64,
+    /// PR title.
+    pub title: String,
+    /// PR body (may be absent).
+    pub body: Option<String>,
+    /// `"open"` or `"closed"`.
+    pub state: String,
+    /// Whether the PR has been merged.
+    pub merged: bool,
+    /// Base branch ref.
+    pub base: GhRef,
+    /// Head branch ref.
+    pub head: GhRef,
+    /// PR author.
+    pub user: GhUser,
+    /// Creation timestamp (ISO 8601).
+    pub created_at: String,
+}
+
+/// A GitHub ref wrapper.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GhRef {
+    /// The ref name (e.g. `"main"`, `"feature-branch"`).
+    #[serde(rename = "ref")]
+    pub ref_field: String,
+    /// The SHA this ref points to.
+    pub sha: String,
+}
+
+/// A review comment on a pull request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GhReviewComment {
+    /// GitHub comment ID.
+    pub id: u64,
+    /// Comment body (may be absent).
+    pub body: Option<String>,
+    /// Comment author.
+    pub user: GhUser,
+    /// The commit ID the comment is anchored to.
+    pub commit_id: String,
+    /// File path the comment is anchored to.
+    pub path: Option<String>,
+    /// Line number the comment is anchored to.
+    pub line: Option<u32>,
+    /// Creation timestamp (ISO 8601).
+    pub created_at: String,
+}
+
 // ---------------------------------------------------------------------------
 // Trait
 // ---------------------------------------------------------------------------
@@ -114,6 +166,55 @@ pub trait GitHubClient {
         repo: &str,
         number: u64,
         body: &str,
+    ) -> impl std::future::Future<Output = Result<u64>>;
+
+    /// Fetch all pull requests from the repository (all states).
+    fn fetch_pulls(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<GhPull>>>;
+
+    /// Fetch review comments for a pull request.
+    fn fetch_review_comments(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> impl std::future::Future<Output = Result<Vec<GhReviewComment>>>;
+
+    /// Create a pull request and return its number.
+    fn create_pull(
+        &self,
+        owner: &str,
+        repo: &str,
+        title: &str,
+        body: &str,
+        head: &str,
+        base: &str,
+    ) -> impl std::future::Future<Output = Result<u64>>;
+
+    /// Update an existing pull request.
+    fn update_pull(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+        title: Option<&str>,
+        body: Option<&str>,
+        state: Option<&str>,
+    ) -> impl std::future::Future<Output = Result<()>>;
+
+    /// Create a review comment on a pull request and return the comment ID.
+    fn create_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+        body: &str,
+        commit_id: &str,
+        path: &str,
+        line: u32,
     ) -> impl std::future::Future<Output = Result<u64>>;
 }
 
@@ -280,6 +381,124 @@ impl GitHubClient for OctocrabClient {
         let payload = Payload { body };
         let url = format!("/repos/{owner}/{repo}/issues/{number}/comments");
         let comment: GhIssueComment = self.inner.post(&url, Some(&payload)).await?;
+        Ok(comment.id)
+    }
+
+    async fn fetch_pulls(&self, owner: &str, repo: &str) -> Result<Vec<GhPull>> {
+        let mut page: u32 = 1;
+        let mut all = Vec::new();
+        loop {
+            let url = format!("/repos/{owner}/{repo}/pulls?state=all&per_page=100&page={page}");
+            let items: Vec<GhPull> = self.inner.get(&url, None::<&()>).await?;
+            let done = items.len() < 100;
+            all.extend(items);
+            if done {
+                break;
+            }
+            page += 1;
+        }
+        Ok(all)
+    }
+
+    async fn fetch_review_comments(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> Result<Vec<GhReviewComment>> {
+        let mut page: u32 = 1;
+        let mut all = Vec::new();
+        loop {
+            let url =
+                format!("/repos/{owner}/{repo}/pulls/{number}/comments?per_page=100&page={page}");
+            let items: Vec<GhReviewComment> = self.inner.get(&url, None::<&()>).await?;
+            let done = items.len() < 100;
+            all.extend(items);
+            if done {
+                break;
+            }
+            page += 1;
+        }
+        Ok(all)
+    }
+
+    async fn create_pull(
+        &self,
+        owner: &str,
+        repo: &str,
+        title: &str,
+        body: &str,
+        head: &str,
+        base: &str,
+    ) -> Result<u64> {
+        #[derive(serde::Serialize)]
+        struct Payload<'a> {
+            title: &'a str,
+            body: &'a str,
+            head: &'a str,
+            base: &'a str,
+        }
+        let payload = Payload {
+            title,
+            body,
+            head,
+            base,
+        };
+        let url = format!("/repos/{owner}/{repo}/pulls");
+        let pull: GhPull = self.inner.post(&url, Some(&payload)).await?;
+        Ok(pull.number)
+    }
+
+    async fn update_pull(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+        title: Option<&str>,
+        body: Option<&str>,
+        state: Option<&str>,
+    ) -> Result<()> {
+        #[derive(serde::Serialize)]
+        struct Payload<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            title: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            body: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            state: Option<&'a str>,
+        }
+        let payload = Payload { title, body, state };
+        let url = format!("/repos/{owner}/{repo}/pulls/{number}");
+        let _: serde_json::Value = self.inner.patch(&url, Some(&payload)).await?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn create_review_comment(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+        body: &str,
+        commit_id: &str,
+        path: &str,
+        line: u32,
+    ) -> Result<u64> {
+        #[derive(serde::Serialize)]
+        struct Payload<'a> {
+            body: &'a str,
+            commit_id: &'a str,
+            path: &'a str,
+            line: u32,
+        }
+        let payload = Payload {
+            body,
+            commit_id,
+            path,
+            line,
+        };
+        let url = format!("/repos/{owner}/{repo}/pulls/{number}/comments");
+        let comment: GhReviewComment = self.inner.post(&url, Some(&payload)).await?;
         Ok(comment.id)
     }
 }

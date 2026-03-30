@@ -33,4 +33,16 @@ pub trait RemoteSync {
         &self,
         repo: &Repository,
     ) -> impl std::future::Future<Output = Result<SyncReport>>;
+
+    /// Import all entities (issues + reviews + comments) from the remote.
+    fn import_all(
+        &self,
+        repo: &Repository,
+    ) -> impl std::future::Future<Output = Result<SyncReport>>;
+
+    /// Export all pending entities (issues + reviews + comments) to the remote.
+    fn export_all(
+        &self,
+        repo: &Repository,
+    ) -> impl std::future::Future<Output = Result<SyncReport>>;
 }

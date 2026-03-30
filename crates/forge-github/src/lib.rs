@@ -43,4 +43,20 @@ impl RemoteSync for GitHubAdapter {
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }
+
+    async fn import_all(&self, repo: &Repository) -> Result<SyncReport> {
+        let client = OctocrabClient::new(self.config.token.as_deref())
+            .map_err(|e| Error::Sync(e.to_string()))?;
+        import::import_all(repo, &self.config, &client)
+            .await
+            .map_err(|e| Error::Sync(e.to_string()))
+    }
+
+    async fn export_all(&self, repo: &Repository) -> Result<SyncReport> {
+        let client = OctocrabClient::new(self.config.token.as_deref())
+            .map_err(|e| Error::Sync(e.to_string()))?;
+        export::export_all(repo, &self.config, &client)
+            .await
+            .map_err(|e| Error::Sync(e.to_string()))
+    }
 }

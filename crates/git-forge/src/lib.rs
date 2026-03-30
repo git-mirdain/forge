@@ -4,6 +4,7 @@ pub mod comment;
 pub mod error;
 pub mod issue;
 pub mod refs;
+pub mod review;
 pub mod sync;
 
 #[cfg(feature = "cli")]

@@ -10,11 +10,14 @@ use std::path::Path;
 
 use facet::Facet;
 use git2::{ErrorCode, ObjectType, Repository};
+use serde::Serialize;
 
 use crate::comment::{
     Anchor, Comment, add_comment, add_reply, issue_comment_ref, list_comments, resolve_comment,
+    review_comment_ref,
 };
 use crate::issue::{Issue, IssueState};
+use crate::review::{Review, ReviewState, ReviewTarget};
 use crate::{Error, Result, Store};
 
 /// A provider configuration entry for JSON serialization.
@@ -24,6 +27,17 @@ pub struct ConfigEntry {
     owner: String,
     repo: String,
     sigils: BTreeMap<String, String>,
+}
+
+/// A contributor identity stored in the forge config.
+#[derive(Facet)]
+pub struct Contributor {
+    /// The contributor's unique identifier (typically the git user name).
+    pub id: String,
+    /// Known email addresses.
+    pub emails: Vec<String>,
+    /// Known display names.
+    pub names: Vec<String>,
 }
 
 /// Owns a [`Repository`] and executes forge operations.
@@ -172,6 +186,300 @@ impl Executor {
         list_comments(&self.repo, &ref_name)
     }
 
+    // -----------------------------------------------------------------------
+    // Reviews
+    // -----------------------------------------------------------------------
+
+    /// Create a new review.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn create_review(
+        &self,
+        title: &str,
+        description: &str,
+        target: &ReviewTarget,
+        source_ref: Option<&str>,
+    ) -> Result<Review> {
+        self.store()
+            .create_review(title, description, target, source_ref)
+    }
+
+    /// Fetch a review by display ID or OID prefix.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::NotFound`] if no matching review exists.
+    pub fn get_review(&self, reference: &str) -> Result<Review> {
+        self.store().get_review(reference)
+    }
+
+    /// List all reviews, optionally filtered by state.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn list_reviews(&self, state: Option<&ReviewState>) -> Result<Vec<Review>> {
+        match state {
+            Some(s) => self.store().list_reviews_by_state(s),
+            None => self.store().list_reviews(),
+        }
+    }
+
+    /// Apply a partial update to a review.
+    ///
+    /// # Errors
+    /// Returns [`crate::Error::NotFound`] if the review does not exist.
+    pub fn update_review(
+        &self,
+        reference: &str,
+        title: Option<&str>,
+        description: Option<&str>,
+        state: Option<&ReviewState>,
+    ) -> Result<Review> {
+        self.store()
+            .update_review(reference, title, description, state)
+    }
+
+    /// Approve a review as the current git user.
+    ///
+    /// # Errors
+    /// Returns an error if the review does not exist or a git operation fails.
+    pub fn approve_review(&self, reference: &str, message: Option<&str>) -> Result<Review> {
+        self.ensure_contributor()?;
+        self.store().approve_review(reference, message)
+    }
+
+    /// Revoke the current user's approval on a review.
+    ///
+    /// # Errors
+    /// Returns an error if the review does not exist or a git operation fails.
+    pub fn revoke_approval(&self, reference: &str) -> Result<Review> {
+        self.store().revoke_approval(reference)
+    }
+
+    // -----------------------------------------------------------------------
+    // Review comments
+    // -----------------------------------------------------------------------
+
+    /// Add a comment to a review.
+    ///
+    /// # Errors
+    /// Returns an error if the review is not found or a git operation fails.
+    pub fn add_review_comment(
+        &self,
+        review_ref: &str,
+        body: &str,
+        anchor: Option<&Anchor>,
+    ) -> Result<Comment> {
+        let review = self.store().get_review(review_ref)?;
+        let ref_name = review_comment_ref(&review.oid);
+        add_comment(&self.repo, &ref_name, body, anchor)
+    }
+
+    /// Reply to a comment on a review.
+    ///
+    /// # Errors
+    /// Returns an error if the review is not found or a git operation fails.
+    pub fn reply_review_comment(
+        &self,
+        review_ref: &str,
+        body: &str,
+        reply_to_oid: &str,
+        anchor: Option<&Anchor>,
+    ) -> Result<Comment> {
+        let review = self.store().get_review(review_ref)?;
+        let ref_name = review_comment_ref(&review.oid);
+        add_reply(&self.repo, &ref_name, body, reply_to_oid, anchor)
+    }
+
+    /// Resolve a comment thread on a review.
+    ///
+    /// # Errors
+    /// Returns an error if the review is not found or a git operation fails.
+    pub fn resolve_review_comment(
+        &self,
+        review_ref: &str,
+        thread_oid: &str,
+        message: Option<&str>,
+    ) -> Result<Comment> {
+        let review = self.store().get_review(review_ref)?;
+        let ref_name = review_comment_ref(&review.oid);
+        resolve_comment(&self.repo, &ref_name, thread_oid, message)
+    }
+
+    /// List comments on a review.
+    ///
+    /// # Errors
+    /// Returns an error if the review is not found or a git operation fails.
+    pub fn list_review_comments(&self, review_ref: &str) -> Result<Vec<Comment>> {
+        let review = self.store().get_review(review_ref)?;
+        let ref_name = review_comment_ref(&review.oid);
+        list_comments(&self.repo, &ref_name)
+    }
+
+    // -----------------------------------------------------------------------
+    // Review worktree
+    // -----------------------------------------------------------------------
+
+    /// Return the active review OID if running inside a review worktree.
+    #[must_use]
+    pub fn active_review(&self) -> Option<String> {
+        if !self.repo.is_worktree() {
+            return None;
+        }
+        let marker = self.repo.path().join("forge-review");
+        std::fs::read_to_string(marker)
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
+    /// Check out a review into a git worktree.
+    ///
+    /// Creates a worktree at `path` (or a default location) with the review's
+    /// head checked out, and writes a `forge-review` marker so that subsequent
+    /// commands inside the worktree can detect the active review.
+    ///
+    /// If the worktree already exists for this review, returns its path without
+    /// recreating it.
+    ///
+    /// # Errors
+    /// Returns an error if the review is not found, the review target is not a
+    /// commit, or a git operation fails.
+    pub fn checkout_review(
+        &self,
+        reference: &str,
+        path: Option<&Path>,
+    ) -> Result<(Review, std::path::PathBuf)> {
+        let review = self.store().get_review(reference)?;
+
+        let wt_name = format!("forge-review-{}", &review.oid[..12.min(review.oid.len())]);
+
+        // If the worktree already exists, return its path.
+        if let Ok(wt) = self.repo.find_worktree(&wt_name)
+            && wt.validate().is_ok()
+        {
+            let wt_repo = Repository::open(wt.path())?;
+            let wt_workdir = wt_repo
+                .workdir()
+                .ok_or_else(|| Error::Config("worktree has no workdir".into()))?;
+            return Ok((review, wt_workdir.to_path_buf()));
+        }
+
+        let workdir = self
+            .repo
+            .workdir()
+            .ok_or_else(|| Error::Config("bare repository".into()))?;
+        let repo_name = workdir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("repo");
+
+        let label = review
+            .display_id
+            .as_deref()
+            .unwrap_or(&review.oid[..12.min(review.oid.len())]);
+        // Sanitize label for use as a path component.
+        let safe_label: String = label
+            .chars()
+            .map(|c| if c == '/' { '_' } else { c })
+            .collect();
+        let default_path = workdir
+            .parent()
+            .unwrap_or(workdir)
+            .join(format!("{repo_name}.review"))
+            .join(&safe_label);
+        let wt_path = path.unwrap_or(&default_path);
+
+        // Resolve the head to a commit (peel trees/blobs → error).
+        let head_oid = git2::Oid::from_str(&review.target.head)?;
+        let head_obj = self.repo.find_object(head_oid, None)?;
+        let head_commit = head_obj.peel_to_commit().map_err(|_| {
+            Error::Config(format!(
+                "review target {} is not a commit",
+                &review.target.head[..12.min(review.target.head.len())]
+            ))
+        })?;
+
+        // Create a branch for the worktree so it has a clean ref.
+        let branch_name = format!("forge/review/{}", &safe_label);
+        let branch = self.repo.branch(&branch_name, &head_commit, true)?;
+        let branch_ref = branch.into_reference();
+
+        std::fs::create_dir_all(wt_path)?;
+
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(&branch_ref));
+        let wt = self.repo.worktree(&wt_name, wt_path, Some(&opts))?;
+
+        // Write the marker file.
+        let wt_repo = Repository::open(wt.path())?;
+        let marker_path = wt_repo.path().join("forge-review");
+        std::fs::write(&marker_path, &review.oid)?;
+
+        Ok((review, wt_path.to_path_buf()))
+    }
+
+    /// Remove a review worktree created by [`checkout_review`].
+    ///
+    /// Prunes the worktree, removes its working directory, and deletes the
+    /// `forge/review/*` branch that was created for it.
+    ///
+    /// If `reference` is `None`, the active review is inferred from the current
+    /// worktree context.
+    ///
+    /// # Errors
+    /// Returns an error if no review context can be determined or a git
+    /// operation fails.
+    pub fn done_review(&self, reference: Option<&str>) -> Result<Review> {
+        let review_oid = match reference {
+            Some(r) => {
+                let review = self.store().get_review(r)?;
+                review.oid.clone()
+            }
+            None => self
+                .active_review()
+                .ok_or_else(|| Error::Config("not in a review worktree".into()))?,
+        };
+
+        let review = self.store().get_review(&review_oid)?;
+        let wt_name = format!("forge-review-{}", &review_oid[..12.min(review_oid.len())]);
+
+        let label = review
+            .display_id
+            .as_deref()
+            .unwrap_or(&review_oid[..12.min(review_oid.len())]);
+        let safe_label: String = label
+            .chars()
+            .map(|c| if c == '/' { '_' } else { c })
+            .collect();
+
+        // Find and remove the worktree.
+        if let Ok(wt) = self.repo.find_worktree(&wt_name) {
+            // Remove the working directory first.
+            if let Ok(wt_repo) = Repository::open(wt.path())
+                && let Some(wd) = wt_repo.workdir()
+            {
+                let _ = std::fs::remove_dir_all(wd);
+            }
+            wt.prune(Some(
+                git2::WorktreePruneOptions::new()
+                    .valid(true)
+                    .working_tree(true),
+            ))?;
+        }
+
+        // Delete the branch we created.
+        let branch_name = format!("forge/review/{safe_label}");
+        if let Ok(mut branch) = self.repo.find_branch(&branch_name, git2::BranchType::Local) {
+            let _ = branch.delete();
+        }
+
+        Ok(review)
+    }
+
+    // -----------------------------------------------------------------------
+    // Config
+    // -----------------------------------------------------------------------
+
     /// Auto-detect provider config from git remote URL(s).
     ///
     /// # Errors
@@ -277,6 +585,131 @@ impl Executor {
             }
         }
         Ok(entries)
+    }
+
+    /// Ensure the current git user is registered as a contributor.
+    ///
+    /// If a contributor entry already contains the current email, this is a
+    /// no-op. Otherwise the user's name and email are appended to their
+    /// contributor record (creating it if necessary).
+    ///
+    /// # Errors
+    /// Returns an error if `user.name` or `user.email` is not configured.
+    fn ensure_contributor(&self) -> Result<()> {
+        let cfg = self.repo.config()?;
+        let name = cfg
+            .get_string("user.name")
+            .map_err(|_| Error::Config("user.name not set".into()))?;
+        let email = cfg
+            .get_string("user.email")
+            .map_err(|_| Error::Config("user.email not set".into()))?;
+
+        let emails =
+            crate::refs::read_config_subtree(&self.repo, &format!("contributors/{name}/emails"))?;
+        if emails.contains_key(&email) {
+            return Ok(());
+        }
+
+        self.contributor_add(&name, &[email.as_str()], &[name.as_str()])
+    }
+
+    /// Register a contributor with explicit emails and names.
+    ///
+    /// Entries are additive — calling this again with the same ID appends
+    /// new emails and names without removing existing ones.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn contributor_add(&self, id: &str, emails: &[&str], names: &[&str]) -> Result<()> {
+        for email in emails {
+            crate::refs::write_config_blob(
+                &self.repo,
+                &format!("contributors/{id}/emails/{email}"),
+                "",
+            )?;
+        }
+        for name in names {
+            crate::refs::write_config_blob(
+                &self.repo,
+                &format!("contributors/{id}/names/{name}"),
+                "",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// List all registered contributors.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn contributor_list(&self) -> Result<Vec<Contributor>> {
+        let reference = match self.repo.find_reference(crate::refs::CONFIG) {
+            Ok(r) => r,
+            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let root_tree = reference.peel_to_commit()?.tree()?;
+        let contrib_entry = match root_tree.get_path(std::path::Path::new("contributors")) {
+            Ok(e) => e,
+            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let contrib_tree = self.repo.find_tree(contrib_entry.id())?;
+
+        let mut contributors = Vec::new();
+        for entry in &contrib_tree {
+            if entry.kind() != Some(ObjectType::Tree) {
+                continue;
+            }
+            let Some(id) = entry.name() else { continue };
+            let emails =
+                crate::refs::read_config_subtree(&self.repo, &format!("contributors/{id}/emails"))?;
+            let names =
+                crate::refs::read_config_subtree(&self.repo, &format!("contributors/{id}/names"))?;
+            contributors.push(Contributor {
+                id: id.to_string(),
+                emails: emails.into_keys().collect(),
+                names: names.into_keys().collect(),
+            });
+        }
+        Ok(contributors)
+    }
+
+    /// Remove a contributor by ID.
+    ///
+    /// # Errors
+    /// Returns an error if the contributor does not exist.
+    pub fn contributor_remove(&self, id: &str) -> Result<()> {
+        let reference = self
+            .repo
+            .find_reference(crate::refs::CONFIG)
+            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
+        let parent = reference.peel_to_commit()?;
+        let root_tree = parent.tree()?;
+
+        let contrib_entry = root_tree
+            .get_path(std::path::Path::new("contributors"))
+            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
+        let contrib_tree = self.repo.find_tree(contrib_entry.id())?;
+        let mut builder = self.repo.treebuilder(Some(&contrib_tree))?;
+        builder
+            .remove(id)
+            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
+
+        let new_contrib_oid = builder.write()?;
+        let root_oid =
+            rebuild_tree_upward(&self.repo, &root_tree, &["contributors"], new_contrib_oid)?;
+        let new_root = self.repo.find_tree(root_oid)?;
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(crate::refs::CONFIG),
+            &sig,
+            &sig,
+            "forge: remove contributor",
+            &new_root,
+            &[&parent],
+        )?;
+        Ok(())
     }
 
     /// Remove a provider config entry.
@@ -452,7 +885,9 @@ impl Executor {
     /// Panics if facet-json fails to serialize a value (indicates a bug).
     #[allow(clippy::too_many_lines)]
     pub fn run(&self, cli: &crate::cli::Cli) -> Result<()> {
-        use crate::cli::{Command, CommentCommand, ConfigCommand, IssueCommand};
+        use crate::cli::{
+            Command, CommentCommand, ConfigCommand, ContributorCommand, IssueCommand, ReviewCommand,
+        };
 
         match &cli.command {
             Command::Config { command } => match command {
@@ -517,41 +952,183 @@ impl Executor {
                         println!("removed {provider}/{owner}/{repo}");
                     }
                 }
+
+                ConfigCommand::Contributor { command } => match command {
+                    ContributorCommand::Add { id, emails, names } => {
+                        let sig = self.repo.signature()?;
+                        let sig_name = sig.name().unwrap_or("unknown");
+                        let sig_email = sig.email().unwrap_or("unknown");
+
+                        let id = id.as_deref().unwrap_or(sig_name);
+                        let default_emails;
+                        let emails: Vec<&str> = if emails.is_empty() {
+                            default_emails = [sig_email.to_string()];
+                            default_emails.iter().map(String::as_str).collect()
+                        } else {
+                            emails.iter().map(String::as_str).collect()
+                        };
+                        let default_names;
+                        let names: Vec<&str> = if names.is_empty() {
+                            default_names = [sig_name.to_string()];
+                            default_names.iter().map(String::as_str).collect()
+                        } else {
+                            names.iter().map(String::as_str).collect()
+                        };
+
+                        self.contributor_add(id, &emails, &names)?;
+                        if !cli.json {
+                            println!("added contributor {id}");
+                        }
+                    }
+
+                    ContributorCommand::List => {
+                        let contributors = self.contributor_list()?;
+                        if cli.json {
+                            println!(
+                                "{}",
+                                facet_json::to_string_pretty(&contributors).expect("serialize")
+                            );
+                        } else {
+                            for c in &contributors {
+                                println!(
+                                    "{}  emails={} names={}",
+                                    c.id,
+                                    c.emails.join(","),
+                                    c.names.join(","),
+                                );
+                            }
+                        }
+                    }
+
+                    ContributorCommand::Remove { id } => {
+                        self.contributor_remove(id)?;
+                        if !cli.json {
+                            println!("removed contributor {id}");
+                        }
+                    }
+                },
             },
 
             Command::Comment { command } => match command {
-                CommentCommand::Add { issue, body, file } => {
-                    let body =
-                        crate::input::resolve_body(body.clone(), file.clone())?.unwrap_or_default();
-                    let comment = self.add_issue_comment(issue, &body, None)?;
-                    print_comment(&comment, cli.json);
-                }
-
-                CommentCommand::Reply {
+                CommentCommand::Add {
                     issue,
-                    reply_to,
+                    review,
+                    anchor,
+                    anchor_path,
+                    range,
+                    anchor_start,
+                    anchor_end,
                     body,
                     file,
                 } => {
                     let body =
                         crate::input::resolve_body(body.clone(), file.clone())?.unwrap_or_default();
-                    let comment = self.reply_issue_comment(issue, &body, reply_to, None)?;
+                    let anchor = build_anchor(
+                        anchor.as_deref(),
+                        anchor_path.as_deref(),
+                        range.as_deref(),
+                        anchor_start.as_deref(),
+                        anchor_end.as_deref(),
+                    );
+                    let review = review.clone().or_else(|| {
+                        if issue.is_none() {
+                            self.active_review()
+                        } else {
+                            None
+                        }
+                    });
+                    let comment = if let Some(ref r) = review {
+                        self.add_review_comment(r, &body, anchor.as_ref())?
+                    } else {
+                        let issue = issue
+                            .as_deref()
+                            .ok_or_else(|| Error::Config("--issue or --review required".into()))?;
+                        self.add_issue_comment(issue, &body, anchor.as_ref())?
+                    };
+                    print_comment(&comment, cli.json);
+                }
+
+                CommentCommand::Reply {
+                    issue,
+                    review,
+                    reply_to,
+                    anchor,
+                    anchor_path,
+                    range,
+                    anchor_start,
+                    anchor_end,
+                    body,
+                    file,
+                } => {
+                    let body =
+                        crate::input::resolve_body(body.clone(), file.clone())?.unwrap_or_default();
+                    let anchor = build_anchor(
+                        anchor.as_deref(),
+                        anchor_path.as_deref(),
+                        range.as_deref(),
+                        anchor_start.as_deref(),
+                        anchor_end.as_deref(),
+                    );
+                    let review = review.clone().or_else(|| {
+                        if issue.is_none() {
+                            self.active_review()
+                        } else {
+                            None
+                        }
+                    });
+                    let comment = if let Some(ref r) = review {
+                        self.reply_review_comment(r, &body, reply_to, anchor.as_ref())?
+                    } else {
+                        let issue = issue
+                            .as_deref()
+                            .ok_or_else(|| Error::Config("--issue or --review required".into()))?;
+                        self.reply_issue_comment(issue, &body, reply_to, anchor.as_ref())?
+                    };
                     print_comment(&comment, cli.json);
                 }
 
                 CommentCommand::Resolve {
                     issue,
+                    review,
                     thread,
                     message,
                     file,
                 } => {
                     let resolved = crate::input::resolve_body(message.clone(), file.clone())?;
-                    let comment = self.resolve_issue_comment(issue, thread, resolved.as_deref())?;
+                    let review = review.clone().or_else(|| {
+                        if issue.is_none() {
+                            self.active_review()
+                        } else {
+                            None
+                        }
+                    });
+                    let comment = if let Some(ref r) = review {
+                        self.resolve_review_comment(r, thread, resolved.as_deref())?
+                    } else {
+                        let issue = issue
+                            .as_deref()
+                            .ok_or_else(|| Error::Config("--issue or --review required".into()))?;
+                        self.resolve_issue_comment(issue, thread, resolved.as_deref())?
+                    };
                     print_comment(&comment, cli.json);
                 }
 
-                CommentCommand::List { issue } => {
-                    let comments = self.list_issue_comments(issue)?;
+                CommentCommand::List { issue, review } => {
+                    let review = review.clone().or_else(|| {
+                        if issue.is_none() {
+                            self.active_review()
+                        } else {
+                            None
+                        }
+                    });
+                    let comments = if let Some(ref r) = review {
+                        self.list_review_comments(r)?
+                    } else {
+                        let issue = issue
+                            .as_deref()
+                            .ok_or_else(|| Error::Config("--issue or --review required".into()))?;
+                        self.list_issue_comments(issue)?
+                    };
                     if cli.json {
                         println!(
                             "{}",
@@ -559,6 +1136,183 @@ impl Executor {
                         );
                     } else {
                         print_comment_list(&comments);
+                    }
+                }
+            },
+
+            Command::Review { command } => match command {
+                ReviewCommand::New {
+                    title,
+                    body,
+                    file,
+                    head,
+                    base,
+                    source_ref,
+                } => {
+                    let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
+                    let title = title.as_deref().unwrap_or("");
+                    let description = resolved_body.as_deref().unwrap_or("");
+
+                    // Validate that head resolves to a git object.
+                    let head_oid = self
+                        .repo
+                        .revparse_single(head)
+                        .map_err(|_| Error::NotFound(head.clone()))?
+                        .id()
+                        .to_string();
+                    let base_oid = base
+                        .as_deref()
+                        .map(|b| {
+                            self.repo
+                                .revparse_single(b)
+                                .map(|o| o.id().to_string())
+                                .map_err(|_| Error::NotFound(b.to_string()))
+                        })
+                        .transpose()?;
+                    let target = ReviewTarget {
+                        head: head_oid,
+                        base: base_oid,
+                    };
+                    let review =
+                        self.create_review(title, description, &target, source_ref.as_deref())?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::Show { reference } => {
+                    let review = self.get_review(reference)?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::List { state } => {
+                    let states: Vec<ReviewState> = state
+                        .as_deref()
+                        .filter(|s| !s.eq_ignore_ascii_case("all"))
+                        .map(|s| {
+                            s.split(',')
+                                .map(|v| v.trim().parse())
+                                .collect::<Result<Vec<_>>>()
+                        })
+                        .transpose()?
+                        .unwrap_or_default();
+
+                    let reviews = if states.len() == 1 {
+                        self.list_reviews(Some(&states[0]))?
+                    } else {
+                        let mut all = self.list_reviews(None)?;
+                        if !states.is_empty() {
+                            all.retain(|r| states.contains(&r.state));
+                        }
+                        all
+                    };
+
+                    if cli.json {
+                        println!(
+                            "{}",
+                            facet_json::to_string_pretty(&reviews).expect("serialize")
+                        );
+                    } else {
+                        print_review_list(&reviews);
+                    }
+                }
+
+                ReviewCommand::Edit {
+                    reference,
+                    title,
+                    body,
+                    file,
+                    state,
+                } => {
+                    let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
+                    let review = self.update_review(
+                        reference,
+                        title.as_deref(),
+                        resolved_body.as_deref(),
+                        state.as_ref(),
+                    )?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::Close { reference } => {
+                    let review =
+                        self.update_review(reference, None, None, Some(&ReviewState::Closed))?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::Approve { reference, message } => {
+                    let review = self.approve_review(reference, message.as_deref())?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::Unapprove { reference } => {
+                    let review = self.revoke_approval(reference)?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::Files { reference } => {
+                    let review = self.get_review(reference)?;
+                    let files = review_target_files(&self.repo, &review)?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            facet_json::to_string_pretty(&files).expect("serialize")
+                        );
+                    } else if files.is_empty() {
+                        println!("No files found (target object may not exist locally).");
+                    } else {
+                        for (path, oid) in &files {
+                            println!("{} {path}", &oid[..oid.len().min(12)]);
+                        }
+                    }
+                }
+
+                ReviewCommand::Coverage { revision } => {
+                    let (covered, uncovered) = review_coverage(&self.repo, self, revision)?;
+                    let total = covered.len() + uncovered.len();
+                    if cli.json {
+                        let report = CoverageReport {
+                            total,
+                            covered: covered.len(),
+                            uncovered_files: &uncovered,
+                        };
+                        println!(
+                            "{}",
+                            facet_json::to_string_pretty(&report).expect("serialize")
+                        );
+                    } else if total == 0 {
+                        println!("No blobs found in {revision}.");
+                    } else if uncovered.is_empty() {
+                        println!("All {total} blobs covered by approved reviews.");
+                    } else {
+                        println!("{}/{total} blobs covered. Uncovered:\n", covered.len());
+                        for (path, oid) in &uncovered {
+                            println!("  {} {path}", &oid[..oid.len().min(12)]);
+                        }
+                    }
+                }
+
+                ReviewCommand::Checkout { reference, path } => {
+                    let (review, wt_path) = self.checkout_review(reference, path.as_deref())?;
+                    if cli.json {
+                        print_review(&review, true);
+                    } else {
+                        let label = review
+                            .display_id
+                            .as_deref()
+                            .unwrap_or(&review.oid[..review.oid.len().min(12)]);
+                        println!("Checked out review {label} to {}", wt_path.display());
+                    }
+                }
+
+                ReviewCommand::Done { reference } => {
+                    let review = self.done_review(reference.as_deref())?;
+                    if cli.json {
+                        print_review(&review, true);
+                    } else {
+                        let label = review
+                            .display_id
+                            .as_deref()
+                            .unwrap_or(&review.oid[..review.oid.len().min(12)]);
+                        println!("Removed review worktree for {label}");
                     }
                 }
             },
@@ -923,4 +1677,191 @@ fn print_issue_list(issues: &[Issue], filter: Option<&IssueState>, color: bool) 
         ]);
     }
     println!("{table}");
+}
+
+fn print_review(review: &Review, json: bool) {
+    if json {
+        println!(
+            "{}",
+            facet_json::to_string_pretty(review).expect("serialize")
+        );
+        return;
+    }
+    let id = review.display_id.as_deref().unwrap_or(&review.oid);
+    println!("review #{id}");
+    println!("title:       {}", review.title);
+    println!("state:       {}", review.state.as_str());
+    println!(
+        "target.head: {}",
+        &review.target.head[..review.target.head.len().min(12)]
+    );
+    if let Some(ref base) = review.target.base {
+        println!("target.base: {}", &base[..base.len().min(12)]);
+    }
+    if let Some(ref sref) = review.source_ref {
+        println!("ref:         {sref}");
+    }
+    if !review.approvals.is_empty() {
+        let names: Vec<&str> = review.approvals.iter().map(|(n, _)| n.as_str()).collect();
+        println!("approved-by: {}", names.join(", "));
+    }
+    if !review.description.is_empty() {
+        println!();
+        println!("{}", review.description);
+    }
+}
+
+/// Walk the review's target object and return `(path, blob_oid)` pairs.
+fn review_target_files(repo: &git2::Repository, review: &Review) -> Result<Vec<(String, String)>> {
+    let Ok(oid) = git2::Oid::from_str(&review.target.head) else {
+        return Ok(Vec::new());
+    };
+    let Ok(obj) = repo.find_object(oid, None) else {
+        return Ok(Vec::new());
+    };
+
+    let mut files = Vec::new();
+    match obj.kind() {
+        Some(git2::ObjectType::Blob) => {
+            files.push(("(blob)".to_string(), review.target.head.clone()));
+        }
+        Some(git2::ObjectType::Tree) => {
+            let tree = repo.find_tree(oid)?;
+            walk_tree(repo, &tree, "", &mut files);
+        }
+        Some(git2::ObjectType::Commit) => {
+            let commit = repo.find_commit(oid)?;
+            let tree = commit.tree()?;
+            walk_tree(repo, &tree, "", &mut files);
+        }
+        _ => {}
+    }
+    Ok(files)
+}
+
+fn walk_tree(
+    repo: &git2::Repository,
+    tree: &git2::Tree<'_>,
+    prefix: &str,
+    out: &mut Vec<(String, String)>,
+) {
+    for entry in tree {
+        let name = entry.name().unwrap_or("");
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        match entry.kind() {
+            Some(git2::ObjectType::Blob) => {
+                out.push((path, entry.id().to_string()));
+            }
+            Some(git2::ObjectType::Tree) => {
+                if let Ok(subtree) = repo.find_tree(entry.id()) {
+                    walk_tree(repo, &subtree, &path, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn build_anchor(
+    anchor: Option<&str>,
+    anchor_path: Option<&str>,
+    range: Option<&str>,
+    anchor_start: Option<&str>,
+    anchor_end: Option<&str>,
+) -> Option<Anchor> {
+    if let Some(oid) = anchor {
+        Some(Anchor::Object {
+            oid: oid.to_string(),
+            path: anchor_path.map(String::from),
+            range: range.map(String::from),
+        })
+    } else if let (Some(start), Some(end)) = (anchor_start, anchor_end) {
+        Some(Anchor::CommitRange {
+            start: start.to_string(),
+            end: end.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+#[derive(Serialize, Facet)]
+struct CoverageReport<'a> {
+    total: usize,
+    covered: usize,
+    uncovered_files: &'a [(String, String)],
+}
+
+type FileList = Vec<(String, String)>;
+
+/// Compute review coverage for a revision.
+///
+/// Returns `(covered, uncovered)` where each is a list of `(path, blob_oid)`.
+fn review_coverage(
+    repo: &git2::Repository,
+    executor: &Executor,
+    revision: &str,
+) -> Result<(FileList, FileList)> {
+    // Resolve the target revision to a tree.
+    let obj = repo
+        .revparse_single(revision)
+        .map_err(|_| Error::NotFound(revision.to_string()))?;
+    let tree = match obj.kind() {
+        Some(git2::ObjectType::Commit) => {
+            let commit = repo.find_commit(obj.id())?;
+            commit.tree()?
+        }
+        Some(git2::ObjectType::Tree) => repo.find_tree(obj.id())?,
+        _ => {
+            return Err(Error::Config(
+                "revision must resolve to a commit or tree".into(),
+            ));
+        }
+    };
+
+    let mut all_blobs: Vec<(String, String)> = Vec::new();
+    walk_tree(repo, &tree, "", &mut all_blobs);
+
+    // Collect blob OIDs covered by any approved review.
+    let reviews = executor.list_reviews(None)?;
+    let mut approved_oids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for review in &reviews {
+        if review.approvals.is_empty() {
+            continue;
+        }
+        let files = review_target_files(repo, review)?;
+        for (_, oid) in files {
+            approved_oids.insert(oid);
+        }
+    }
+
+    let mut covered = Vec::new();
+    let mut uncovered = Vec::new();
+    for (path, oid) in all_blobs {
+        if approved_oids.contains(&oid) {
+            covered.push((path, oid));
+        } else {
+            uncovered.push((path, oid));
+        }
+    }
+    Ok((covered, uncovered))
+}
+
+fn print_review_list(reviews: &[Review]) {
+    if reviews.is_empty() {
+        println!("No reviews found.");
+        return;
+    }
+    println!("Showing {} reviews\n", reviews.len());
+    for review in reviews {
+        let id = review
+            .display_id
+            .as_deref()
+            .unwrap_or(&review.oid[..review.oid.len().min(12)]);
+        println!("{id}  {}  {}", review.state.as_str(), review.title);
+    }
 }

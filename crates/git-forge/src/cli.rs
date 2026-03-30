@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::issue::IssueState;
+use crate::review::ReviewState;
 
 /// Local-first Git forge CLI.
 #[derive(Parser, Debug)]
@@ -31,7 +32,13 @@ pub enum Command {
         #[command(subcommand)]
         command: IssueCommand,
     },
-    /// Manage comments on issues.
+    /// Manage reviews.
+    Review {
+        /// Review subcommand.
+        #[command(subcommand)]
+        command: ReviewCommand,
+    },
+    /// Manage comments on issues or reviews.
     Comment {
         /// Comment subcommand.
         #[command(subcommand)]
@@ -78,16 +85,73 @@ pub enum ConfigCommand {
         /// Repository name.
         repo: String,
     },
+    /// Manage contributors.
+    Contributor {
+        /// Contributor subcommand.
+        #[command(subcommand)]
+        command: ContributorCommand,
+    },
+}
+
+/// Contributor subcommands.
+#[derive(Subcommand, Debug)]
+pub enum ContributorCommand {
+    /// Register a contributor.
+    Add {
+        /// Contributor ID (defaults to git user name).
+        #[arg(long)]
+        id: Option<String>,
+
+        /// Email addresses (defaults to git user email).
+        #[arg(long = "email", short = 'e')]
+        emails: Vec<String>,
+
+        /// Display names (defaults to git user name).
+        #[arg(long = "name", short = 'n')]
+        names: Vec<String>,
+    },
+    /// List all contributors.
+    List,
+    /// Remove a contributor.
+    Remove {
+        /// Contributor ID.
+        id: String,
+    },
 }
 
 /// Comment subcommands.
 #[derive(Subcommand, Debug)]
 pub enum CommentCommand {
-    /// Add a top-level comment to an issue.
+    /// Add a top-level comment to an issue or review.
+    #[command(group(clap::ArgGroup::new("entity").args(["issue", "review"])))]
     Add {
         /// Issue display ID or OID prefix.
         #[arg(long)]
-        issue: String,
+        issue: Option<String>,
+
+        /// Review display ID or OID prefix.
+        #[arg(long)]
+        review: Option<String>,
+
+        /// Anchor the comment to a git object (blob, commit, or tree OID).
+        #[arg(long, conflicts_with_all = ["anchor_start", "anchor_end"])]
+        anchor: Option<String>,
+
+        /// File path within the anchored object.
+        #[arg(long, requires = "anchor")]
+        anchor_path: Option<String>,
+
+        /// Line range within the anchored object (e.g. "10-20").
+        #[arg(long, requires = "anchor")]
+        range: Option<String>,
+
+        /// Start OID for a commit-range anchor.
+        #[arg(long, requires = "anchor_end", conflicts_with = "anchor")]
+        anchor_start: Option<String>,
+
+        /// End OID for a commit-range anchor.
+        #[arg(long, requires = "anchor_start", conflicts_with = "anchor")]
+        anchor_end: Option<String>,
 
         /// Comment body (Markdown).
         body: Option<String>,
@@ -98,14 +162,39 @@ pub enum CommentCommand {
     },
 
     /// Reply to an existing comment.
+    #[command(group(clap::ArgGroup::new("entity").args(["issue", "review"])))]
     Reply {
         /// Issue display ID or OID prefix.
         #[arg(long)]
-        issue: String,
+        issue: Option<String>,
+
+        /// Review display ID or OID prefix.
+        #[arg(long)]
+        review: Option<String>,
 
         /// OID of the comment to reply to.
         #[arg(long = "to")]
         reply_to: String,
+
+        /// Anchor the reply to a git object (blob, commit, or tree OID).
+        #[arg(long, conflicts_with_all = ["anchor_start", "anchor_end"])]
+        anchor: Option<String>,
+
+        /// File path within the anchored object.
+        #[arg(long, requires = "anchor")]
+        anchor_path: Option<String>,
+
+        /// Line range within the anchored object (e.g. "10-20").
+        #[arg(long, requires = "anchor")]
+        range: Option<String>,
+
+        /// Start OID for a commit-range anchor.
+        #[arg(long, requires = "anchor_end", conflicts_with = "anchor")]
+        anchor_start: Option<String>,
+
+        /// End OID for a commit-range anchor.
+        #[arg(long, requires = "anchor_start", conflicts_with = "anchor")]
+        anchor_end: Option<String>,
 
         /// Comment body (Markdown).
         body: Option<String>,
@@ -116,10 +205,15 @@ pub enum CommentCommand {
     },
 
     /// Resolve a comment thread.
+    #[command(group(clap::ArgGroup::new("entity").args(["issue", "review"])))]
     Resolve {
         /// Issue display ID or OID prefix.
         #[arg(long)]
-        issue: String,
+        issue: Option<String>,
+
+        /// Review display ID or OID prefix.
+        #[arg(long)]
+        review: Option<String>,
 
         /// OID of the comment that starts the thread.
         #[arg(long = "thread")]
@@ -133,11 +227,130 @@ pub enum CommentCommand {
         file: Option<PathBuf>,
     },
 
-    /// List comments on an issue.
+    /// List comments on an issue or review.
+    #[command(group(clap::ArgGroup::new("entity").args(["issue", "review"])))]
     List {
         /// Issue display ID or OID prefix.
         #[arg(long)]
-        issue: String,
+        issue: Option<String>,
+
+        /// Review display ID or OID prefix.
+        #[arg(long)]
+        review: Option<String>,
+    },
+}
+
+/// Review subcommands.
+#[derive(Subcommand, Debug)]
+pub enum ReviewCommand {
+    /// Create a new review.
+    New {
+        /// Review title.
+        title: Option<String>,
+
+        /// Description (Markdown).
+        #[arg(long)]
+        body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
+
+        /// Head object OID or ref.
+        #[arg(long)]
+        head: String,
+
+        /// Base object OID or ref (for commit ranges).
+        #[arg(long)]
+        base: Option<String>,
+
+        /// Source ref name to track for refreshes.
+        #[arg(long = "ref")]
+        source_ref: Option<String>,
+    },
+
+    /// Show a review.
+    Show {
+        /// Display ID or OID prefix.
+        reference: String,
+    },
+
+    /// List reviews.
+    List {
+        /// Filter by state (comma-separated, e.g. `open,closed`).
+        #[arg(long)]
+        state: Option<String>,
+    },
+
+    /// Edit a review.
+    Edit {
+        /// Display ID or OID prefix.
+        reference: String,
+
+        /// New title.
+        #[arg(long)]
+        title: Option<String>,
+
+        /// New description (Markdown).
+        #[arg(long)]
+        body: Option<String>,
+
+        /// Read body from a file.
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
+
+        /// New state.
+        #[arg(long)]
+        state: Option<ReviewState>,
+    },
+
+    /// Close a review.
+    Close {
+        /// Display ID or OID prefix.
+        reference: String,
+    },
+
+    /// Approve a review.
+    Approve {
+        /// Display ID or OID prefix.
+        reference: String,
+
+        /// Optional approval message.
+        message: Option<String>,
+    },
+
+    /// Revoke your approval on a review.
+    Unapprove {
+        /// Display ID or OID prefix.
+        reference: String,
+    },
+
+    /// List files in the review target.
+    Files {
+        /// Display ID or OID prefix.
+        reference: String,
+    },
+
+    /// Show which blobs in a tree lack approved reviews.
+    Coverage {
+        /// Git revision to check (defaults to HEAD).
+        #[arg(default_value = "HEAD")]
+        revision: String,
+    },
+
+    /// Check out a review into a worktree for commenting.
+    Checkout {
+        /// Display ID or OID prefix.
+        reference: String,
+
+        /// Worktree path (default: ../<repo-name>.review/<reference>).
+        path: Option<PathBuf>,
+    },
+
+    /// Remove a review worktree created by `checkout`.
+    Done {
+        /// Display ID or OID prefix (inferred from active worktree if omitted).
+        reference: Option<String>,
     },
 }
 

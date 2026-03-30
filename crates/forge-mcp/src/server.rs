@@ -31,6 +31,7 @@ impl ForgeMcpServer {
         let repo_path = repo.path().to_path_buf();
         let mut tool_router = Self::issue_router();
         tool_router.merge(Self::comment_router());
+        tool_router.merge(Self::review_router());
         Ok(Self {
             repo_path,
             tool_router,
