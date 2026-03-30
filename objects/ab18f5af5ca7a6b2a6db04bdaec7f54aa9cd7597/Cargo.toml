@@ -1,0 +1,36 @@
+[package]
+name = "git-forge"
+version = "0.0.0"
+authors.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Local-first infrastructure for Git forges."
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli", "exe"]
+exe = ["dep:facet-json"]
+cli = ["exe", "dep:clap", "dep:inquire", "dep:comfy-table"]
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+git2 = { workspace = true }
+git-ledger = { workspace = true }
+git-chain = { workspace = true }
+facet = { workspace = true }
+facet-json = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+inquire = { workspace = true, optional = true }
+comfy-table = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
