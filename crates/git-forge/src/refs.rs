@@ -16,6 +16,10 @@ pub const ISSUE_COMMENTS_PREFIX: &str = "refs/forge/comments/issue/";
 pub const REVIEW_COMMENTS_PREFIX: &str = "refs/forge/comments/review/";
 /// Chain ref prefix for standalone object comments.
 pub const OBJECT_COMMENTS_PREFIX: &str = "refs/forge/comments/object/";
+/// Ref prefix for per-thread comment chains (v2).
+pub const COMMENTS_PREFIX: &str = "refs/forge/comments/";
+/// Index ref mapping object OIDs to comment thread UUIDs.
+pub const COMMENTS_INDEX: &str = "refs/forge/index/comments-by-object";
 /// Index ref mapping display IDs ↔ OIDs for issues.
 pub const ISSUE_INDEX: &str = "refs/forge/meta/index/issues";
 /// Index ref mapping display IDs ↔ OIDs for reviews.
