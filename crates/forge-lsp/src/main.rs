@@ -1,6 +1,4 @@
 //! Forge LSP server — surfaces inline comments as inlay hints.
-// Uses v1 comment functions temporarily until Phase 10 LSP update.
-#![allow(deprecated)]
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -17,7 +15,7 @@ use tower_lsp::lsp_types::{
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use git_forge::comment::{self, Comment, LegacyAnchor as Anchor, object_comment_ref};
+use git_forge::comment::{Comment, find_threads_by_object, list_thread_comments};
 
 struct ForgeLanguageServer {
     client: Client,
@@ -45,18 +43,22 @@ impl ForgeLanguageServer {
     }
 
     fn hints_for_blob(repo: &Repository, blob_oid: &str) -> Vec<InlayHint> {
-        let ref_name = object_comment_ref(blob_oid);
-        let Ok(comments) = comment::list_comments(repo, &ref_name) else {
+        let Ok(thread_ids) = find_threads_by_object(repo, blob_oid) else {
             return Vec::new();
         };
 
-        comments
-            .iter()
-            .filter(|c| !c.resolved && c.replaces.is_none())
-            .map(|c| {
+        let mut hints = Vec::new();
+        for thread_id in &thread_ids {
+            let Ok(comments) = list_thread_comments(repo, thread_id) else {
+                continue;
+            };
+            for c in comments
+                .iter()
+                .filter(|c| !c.resolved && c.replaces.is_none())
+            {
                 let position = comment_position(c);
                 let label = format!("▸ {}: {}", c.author_name, first_line(&c.body));
-                InlayHint {
+                hints.push(InlayHint {
                     position,
                     label: InlayHintLabel::String(label),
                     kind: None,
@@ -65,9 +67,10 @@ impl ForgeLanguageServer {
                     padding_left: Some(true),
                     padding_right: None,
                     data: None,
-                }
-            })
-            .collect()
+                });
+            }
+        }
+        hints
     }
 
     async fn store_and_refresh(&self, uri: &Url, content: &str) {
@@ -78,14 +81,19 @@ impl ForgeLanguageServer {
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn comment_position(comment: &Comment) -> Position {
-    if let Some(Anchor::Object {
+    // thread_id is set for v2 comments; use the anchor from the commit message.
+    // The v2 Anchor is parsed from the "Anchor: <oid>" + "Anchor-Range: start-end"
+    // trailers and stored as LegacyAnchor::Object { range, .. }.
+    // Read start_line from the legacy range field for now.
+    #[allow(deprecated)]
+    if let Some(git_forge::comment::LegacyAnchor::Object {
         range: Some(range), ..
     }) = &comment.anchor
-        && let Some((start, _)) = parse_line_range(range)
+        && let Some((start, _)) = parse_range_start(range)
     {
         return Position {
+            #[allow(clippy::cast_possible_truncation)]
             line: start.saturating_sub(1) as u32,
             character: u32::MAX,
         };
@@ -96,9 +104,13 @@ fn comment_position(comment: &Comment) -> Position {
     }
 }
 
-fn parse_line_range(range: &str) -> Option<(usize, usize)> {
-    let (a, b) = range.split_once('-')?;
-    Some((a.parse().ok()?, b.parse().ok()?))
+fn parse_range_start(range: &str) -> Option<(usize, usize)> {
+    if let Some((a, b)) = range.split_once('-') {
+        Some((a.parse().ok()?, b.parse().ok()?))
+    } else {
+        let n = range.parse().ok()?;
+        Some((n, n))
+    }
 }
 
 fn first_line(s: &str) -> &str {
