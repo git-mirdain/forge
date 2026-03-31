@@ -476,6 +476,21 @@ pub fn list_thread_comments(repo: &Repository, thread_id: &str) -> Result<Vec<Co
         .collect()
 }
 
+/// Return `true` if any commit in the thread carries `Resolved: true`.
+///
+/// # Errors
+/// Returns an error if a git operation fails.
+pub fn thread_is_resolved(repo: &Repository, thread_id: &str) -> Result<bool> {
+    let ref_name = comment_thread_ref(thread_id);
+    let Ok(entries) = repo.walk(&ref_name, None) else {
+        return Ok(false);
+    };
+    Ok(entries.iter().any(|e| {
+        let (_, trailers) = parse_trailers(&e.message);
+        trailers.get("Resolved").is_some_and(|v| v == "true")
+    }))
+}
+
 /// List all thread UUIDs in the repository.
 ///
 /// # Errors

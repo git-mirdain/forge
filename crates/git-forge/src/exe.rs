@@ -12,9 +12,10 @@ use facet::Facet;
 use git2::{ErrorCode, ObjectType, Repository};
 use serde::Serialize;
 
+use crate::cli::CommentStateFilter;
 use crate::comment::{
-    Anchor, Comment, create_thread, find_threads_by_object, list_thread_comments, reply_to_thread,
-    resolve_thread,
+    Anchor, Comment, create_thread, find_threads_by_object, list_all_thread_ids,
+    list_thread_comments, reply_to_thread, resolve_thread, thread_is_resolved,
 };
 use crate::issue::{Issue, IssueState};
 use crate::refs::walk_tree;
@@ -1227,9 +1228,29 @@ impl Executor {
                     print_comment(&result, cli.json);
                 }
 
-                CommentCommand::List { on } => {
-                    let oid = self.resolve_anchor_spec(on)?;
-                    let comments = self.list_comments_on(&oid)?;
+                CommentCommand::List { on, all, state } => {
+                    let comments = if *all {
+                        let thread_ids = list_all_thread_ids(&self.repo)?;
+                        let mut acc = Vec::new();
+                        for thread_id in &thread_ids {
+                            let resolved = thread_is_resolved(&self.repo, thread_id)?;
+                            let include = match state {
+                                CommentStateFilter::Active => !resolved,
+                                CommentStateFilter::Resolved => resolved,
+                                CommentStateFilter::All => true,
+                            };
+                            if include {
+                                let cs = list_thread_comments(&self.repo, thread_id)?;
+                                acc.extend(cs);
+                            }
+                        }
+                        acc.sort_by_key(|c| c.timestamp);
+                        acc
+                    } else {
+                        let oid = self
+                            .resolve_anchor_spec(on.as_deref().expect("--on or --all required"))?;
+                        self.list_comments_on(&oid)?
+                    };
                     if cli.json {
                         println!(
                             "{}",

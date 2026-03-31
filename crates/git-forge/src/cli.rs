@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::issue::IssueState;
 use crate::review::ReviewState;
@@ -129,6 +129,17 @@ pub enum ContributorCommand {
     },
 }
 
+/// Filter for comment thread resolved state.
+#[derive(ValueEnum, Debug, Clone)]
+pub enum CommentStateFilter {
+    /// Only unresolved threads.
+    Active,
+    /// Only resolved threads.
+    Resolved,
+    /// All threads regardless of state.
+    All,
+}
+
 /// Comment subcommands.
 #[derive(Subcommand, Debug)]
 pub enum CommentCommand {
@@ -210,11 +221,24 @@ pub enum CommentCommand {
         body: String,
     },
 
-    /// List all comment threads anchored to a git object.
+    /// List comment threads.
+    ///
+    /// Use `--on` to scope to one git object, or `--all` to list across the
+    /// whole repository.  With `--all`, `--state` filters by resolved state
+    /// (default: `active`).
+    #[command(group(clap::ArgGroup::new("target").required(true).args(["on", "all"])))]
     List {
         /// Anchor spec: raw OID, `HEAD:<path>`, `issue:<id>`, or `review:<id>`.
-        #[arg(long)]
-        on: String,
+        #[arg(long, group = "target")]
+        on: Option<String>,
+
+        /// List threads across the entire repository.
+        #[arg(long, group = "target")]
+        all: bool,
+
+        /// Filter by resolved state (only applies with `--all`).
+        #[arg(long, default_value = "active")]
+        state: CommentStateFilter,
     },
 
     /// Show all comments in a thread.
