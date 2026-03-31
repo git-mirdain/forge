@@ -1,17 +1,15 @@
-//! Forge LSP server — surfaces inline comments as inlay hints.
+//! Forge LSP server — surfaces inline comments as diagnostics.
 
-use std::collections::HashMap;
 use std::sync::RwLock;
 
 use git2::Repository;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams, InlayHint,
-    InlayHintLabel, InlayHintOptions, InlayHintParams, InlayHintServerCapabilities, MessageType,
-    OneOf, Position, SaveOptions, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url,
-    WorkDoneProgressOptions,
+    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, InitializeParams, InitializeResult,
+    InitializedParams, MessageType, Position, Range, SaveOptions, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Url,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -20,7 +18,6 @@ use git_forge::comment::{Comment, find_threads_by_object, list_thread_comments};
 struct ForgeLanguageServer {
     client: Client,
     repo_path: RwLock<Option<std::path::PathBuf>>,
-    content_cache: RwLock<HashMap<Url, String>>,
 }
 
 impl ForgeLanguageServer {
@@ -28,7 +25,6 @@ impl ForgeLanguageServer {
         Self {
             client,
             repo_path: RwLock::new(None),
-            content_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -42,12 +38,12 @@ impl ForgeLanguageServer {
         repo.blob(content).ok().map(|oid| oid.to_string())
     }
 
-    fn hints_for_blob(repo: &Repository, blob_oid: &str) -> Vec<InlayHint> {
+    fn diagnostics_for_blob(repo: &Repository, blob_oid: &str) -> Vec<Diagnostic> {
         let Ok(thread_ids) = find_threads_by_object(repo, blob_oid) else {
             return Vec::new();
         };
 
-        let mut hints = Vec::new();
+        let mut diagnostics = Vec::new();
         for thread_id in &thread_ids {
             let Ok(comments) = list_thread_comments(repo, thread_id) else {
                 continue;
@@ -56,48 +52,62 @@ impl ForgeLanguageServer {
                 .iter()
                 .filter(|c| !c.resolved && c.replaces.is_none())
             {
-                let position = comment_position(c);
-                let label = format!("▸ {}: {}", c.author_name, first_line(&c.body));
-                hints.push(InlayHint {
-                    position,
-                    label: InlayHintLabel::String(label),
-                    kind: None,
-                    text_edits: None,
-                    tooltip: None,
-                    padding_left: Some(true),
-                    padding_right: None,
-                    data: None,
+                let range = comment_range(c);
+                let message = format!("{}: {}", c.author_name, c.body);
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::HINT),
+                    source: Some("forge".into()),
+                    message,
+                    ..Default::default()
                 });
             }
         }
-        hints
+        diagnostics
     }
 
-    async fn store_and_refresh(&self, uri: &Url, content: &str) {
-        if let Ok(mut cache) = self.content_cache.write() {
-            cache.insert(uri.clone(), content.to_string());
-        }
-        self.client.inlay_hint_refresh().await.ok();
+    async fn publish_diagnostics(&self, uri: &Url, content: &str) {
+        let diagnostics = self
+            .open_repo()
+            .and_then(|repo| {
+                let blob_oid = Self::hash_content(&repo, content.as_bytes())?;
+                Some(Self::diagnostics_for_blob(&repo, &blob_oid))
+            })
+            .unwrap_or_default();
+
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .await;
     }
 }
 
-fn comment_position(comment: &Comment) -> Position {
+fn comment_range(comment: &Comment) -> Range {
     if let Some(anchor) = &comment.anchor
         && let Some(start) = anchor.start_line
     {
-        return Position {
-            line: start.saturating_sub(1),
-            character: u32::MAX,
+        let start_line = start.saturating_sub(1);
+        let end_line = anchor.end_line.unwrap_or(start).saturating_sub(1);
+        return Range {
+            start: Position {
+                line: start_line,
+                character: 0,
+            },
+            end: Position {
+                line: end_line,
+                character: u32::MAX,
+            },
         };
     }
-    Position {
-        line: 0,
-        character: u32::MAX,
+    Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 0,
+            character: u32::MAX,
+        },
     }
-}
-
-fn first_line(s: &str) -> &str {
-    s.lines().next().unwrap_or(s)
 }
 
 #[tower_lsp::async_trait]
@@ -121,12 +131,6 @@ impl LanguageServer for ForgeLanguageServer {
                         ..Default::default()
                     },
                 )),
-                inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
-                    InlayHintOptions {
-                        resolve_provider: Some(false),
-                        work_done_progress_options: WorkDoneProgressOptions::default(),
-                    },
-                ))),
                 ..Default::default()
             },
             ..Default::default()
@@ -144,49 +148,28 @@ impl LanguageServer for ForgeLanguageServer {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.store_and_refresh(&params.text_document.uri, &params.text_document.text)
+        self.publish_diagnostics(&params.text_document.uri, &params.text_document.text)
             .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.last() {
-            self.store_and_refresh(&params.text_document.uri, &change.text)
+            self.publish_diagnostics(&params.text_document.uri, &change.text)
                 .await;
         }
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         if let Some(text) = &params.text {
-            self.store_and_refresh(&params.text_document.uri, text)
+            self.publish_diagnostics(&params.text_document.uri, text)
                 .await;
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        if let Ok(mut cache) = self.content_cache.write() {
-            cache.remove(&params.text_document.uri);
-        }
-    }
-
-    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        let Some(repo) = self.open_repo() else {
-            return Ok(None);
-        };
-
-        let uri = &params.text_document.uri;
-        let content = {
-            let cache = self.content_cache.read().ok();
-            cache.and_then(|c| c.get(uri).cloned())
-        };
-        let Some(content) = content else {
-            return Ok(None);
-        };
-
-        let Some(blob_oid) = Self::hash_content(&repo, content.as_bytes()) else {
-            return Ok(None);
-        };
-
-        Ok(Some(Self::hints_for_blob(&repo, &blob_oid)))
+        self.client
+            .publish_diagnostics(params.text_document.uri, vec![], None)
+            .await;
     }
 }
 
