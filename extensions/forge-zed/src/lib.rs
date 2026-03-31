@@ -1,10 +1,41 @@
-use zed_extension_api::{self as zed, Command, ContextServerId, Project, Result};
+use zed_extension_api::{self as zed, Command, ContextServerId, LanguageServerId, Project, Result};
 
 struct ForgeExtension;
 
 impl zed::Extension for ForgeExtension {
     fn new() -> Self {
         Self
+    }
+
+    fn language_server_command(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Command> {
+        const BINARY_NAME: &str = "forge-lsp";
+
+        let candidate = format!("{}/target/debug/{BINARY_NAME}", worktree.root_path());
+        if std::fs::metadata(&candidate).is_ok() {
+            return Ok(Command {
+                command: candidate,
+                args: vec![],
+                env: vec![],
+            });
+        }
+
+        if let Some(path) = worktree.which(BINARY_NAME) {
+            return Ok(Command {
+                command: path,
+                args: vec![],
+                env: vec![],
+            });
+        }
+
+        Ok(Command {
+            command: BINARY_NAME.to_string(),
+            args: vec![],
+            env: vec![],
+        })
     }
 
     fn context_server_command(

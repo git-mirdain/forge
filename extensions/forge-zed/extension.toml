@@ -5,4 +5,8 @@ schema_version = 1
 authors = ["Joey Carpinelli"]
 description = "Git Forge integration for Zed"
 
+[language_servers.forge-lsp]
+name = "Forge LSP"
+languages = ["Rust", "Markdown"]
+
 [context_servers.forge-mcp]
