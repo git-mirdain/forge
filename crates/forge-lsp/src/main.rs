@@ -1,4 +1,4 @@
-//! Forge LSP server — publishes inline diagnostics for active review comments.
+//! Forge LSP server — surfaces inline comments as inlay hints.
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -6,21 +6,21 @@ use std::sync::RwLock;
 use git2::Repository;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
-    Position, Range, SaveOptions, ServerCapabilities, TextDocumentSyncCapability,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams, InlayHint,
+    InlayHintLabel, InlayHintOptions, InlayHintParams, InlayHintServerCapabilities, MessageType,
+    OneOf, Position, SaveOptions, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Url,
+    WorkDoneProgressOptions,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use git_forge::Store;
 use git_forge::comment::{self, Anchor, Comment, object_comment_ref};
-use git_forge::refs::walk_tree;
-use git_forge::review::ReviewState;
 
 struct ForgeLanguageServer {
     client: Client,
     repo_path: RwLock<Option<std::path::PathBuf>>,
+    content_cache: RwLock<HashMap<Url, String>>,
 }
 
 impl ForgeLanguageServer {
@@ -28,149 +28,79 @@ impl ForgeLanguageServer {
         Self {
             client,
             repo_path: RwLock::new(None),
+            content_cache: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Open the git repository for the workspace.
     fn open_repo(&self) -> Option<Repository> {
         let path = self.repo_path.read().ok()?;
         let path = path.as_ref()?;
         Repository::discover(path).ok()
     }
 
-    /// Collect all blob OIDs that are targets of open reviews.
-    fn active_review_blobs(repo: &Repository) -> HashMap<String, Vec<String>> {
-        let store = Store::new(repo);
-        let Ok(reviews) = store.list_reviews_by_state(&ReviewState::Open) else {
-            return HashMap::new();
-        };
-
-        let mut blob_paths: HashMap<String, Vec<String>> = HashMap::new();
-        for review in &reviews {
-            let Ok(oid) = git2::Oid::from_str(&review.target.head) else {
-                continue;
-            };
-            let Ok(obj) = repo.find_object(oid, None) else {
-                continue;
-            };
-            let mut files = Vec::new();
-            match obj.kind() {
-                Some(git2::ObjectType::Blob) => {
-                    files.push(("(blob)".to_string(), review.target.head.clone()));
-                }
-                Some(git2::ObjectType::Tree) => {
-                    if let Ok(tree) = repo.find_tree(oid) {
-                        walk_tree(repo, &tree, "", &mut files);
-                    }
-                }
-                Some(git2::ObjectType::Commit) => {
-                    if let Ok(commit) = repo.find_commit(oid)
-                        && let Ok(tree) = commit.tree()
-                    {
-                        walk_tree(repo, &tree, "", &mut files);
-                    }
-                }
-                _ => {}
-            }
-            for (path, blob_oid) in files {
-                blob_paths.entry(blob_oid).or_default().push(path);
-            }
-        }
-        blob_paths
-    }
-
-    /// Hash file content to a git blob OID (same algorithm as `git hash-object`).
     fn hash_content(repo: &Repository, content: &[u8]) -> Option<String> {
         repo.blob(content).ok().map(|oid| oid.to_string())
     }
 
-    /// Build diagnostics for a document whose content hashes to `blob_oid`.
-    fn diagnostics_for_blob(repo: &Repository, blob_oid: &str) -> Vec<Diagnostic> {
+    fn hints_for_blob(repo: &Repository, blob_oid: &str) -> Vec<InlayHint> {
         let ref_name = object_comment_ref(blob_oid);
         let Ok(comments) = comment::list_comments(repo, &ref_name) else {
             return Vec::new();
         };
 
-        let mut diagnostics = Vec::new();
-        for c in &comments {
-            if c.resolved || c.replaces.is_some() {
-                continue;
-            }
-            let range = comment_range(c);
-            let source = c
-                .migrated_from
-                .as_ref()
-                .map_or("forge", |_| "forge (migrated)");
-            diagnostics.push(Diagnostic {
-                range,
-                severity: Some(DiagnosticSeverity::HINT),
-                source: Some(source.to_string()),
-                message: format!("{}: {}", c.author_name, c.body),
-                ..Default::default()
-            });
-        }
-        diagnostics
+        comments
+            .iter()
+            .filter(|c| !c.resolved && c.replaces.is_none())
+            .map(|c| {
+                let position = comment_position(c);
+                let label = format!("▸ {}: {}", c.author_name, first_line(&c.body));
+                InlayHint {
+                    position,
+                    label: InlayHintLabel::String(label),
+                    kind: None,
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: Some(true),
+                    padding_right: None,
+                    data: None,
+                }
+            })
+            .collect()
     }
 
-    /// Publish diagnostics for a single document.
-    async fn refresh_document(&self, uri: &Url, content: &str) {
-        let Some(repo) = self.open_repo() else {
-            return;
-        };
-
-        let Some(blob_oid) = Self::hash_content(&repo, content.as_bytes()) else {
-            return;
-        };
-
-        let blob_paths = Self::active_review_blobs(&repo);
-        if !blob_paths.contains_key(&blob_oid) {
-            self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
-                .await;
-            return;
+    async fn store_and_refresh(&self, uri: &Url, content: &str) {
+        if let Ok(mut cache) = self.content_cache.write() {
+            cache.insert(uri.clone(), content.to_string());
         }
-
-        let diagnostics = Self::diagnostics_for_blob(&repo, &blob_oid);
-        self.client
-            .publish_diagnostics(uri.clone(), diagnostics, None)
-            .await;
+        self.client.inlay_hint_refresh().await.ok();
     }
 }
 
-/// Map a comment's anchor range to an LSP Range.
 #[allow(clippy::cast_possible_truncation)]
-fn comment_range(comment: &Comment) -> Range {
+fn comment_position(comment: &Comment) -> Position {
     if let Some(Anchor::Object {
         range: Some(range), ..
     }) = &comment.anchor
-        && let Some((start, end)) = parse_line_range(range)
+        && let Some((start, _)) = parse_line_range(range)
     {
-        return Range {
-            start: Position {
-                line: start.saturating_sub(1) as u32,
-                character: 0,
-            },
-            end: Position {
-                line: end as u32,
-                character: 0,
-            },
+        return Position {
+            line: start.saturating_sub(1) as u32,
+            character: u32::MAX,
         };
     }
-    Range {
-        start: Position {
-            line: 0,
-            character: 0,
-        },
-        end: Position {
-            line: 0,
-            character: 0,
-        },
+    Position {
+        line: 0,
+        character: u32::MAX,
     }
 }
 
 fn parse_line_range(range: &str) -> Option<(usize, usize)> {
     let (a, b) = range.split_once('-')?;
     Some((a.parse().ok()?, b.parse().ok()?))
+}
+
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or(s)
 }
 
 #[tower_lsp::async_trait]
@@ -194,6 +124,12 @@ impl LanguageServer for ForgeLanguageServer {
                         ..Default::default()
                     },
                 )),
+                inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+                    InlayHintOptions {
+                        resolve_provider: Some(false),
+                        work_done_progress_options: WorkDoneProgressOptions::default(),
+                    },
+                ))),
                 ..Default::default()
             },
             ..Default::default()
@@ -211,21 +147,49 @@ impl LanguageServer for ForgeLanguageServer {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.refresh_document(&params.text_document.uri, &params.text_document.text)
+        self.store_and_refresh(&params.text_document.uri, &params.text_document.text)
             .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.last() {
-            self.refresh_document(&params.text_document.uri, &change.text)
+            self.store_and_refresh(&params.text_document.uri, &change.text)
                 .await;
         }
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         if let Some(text) = &params.text {
-            self.refresh_document(&params.text_document.uri, text).await;
+            self.store_and_refresh(&params.text_document.uri, text)
+                .await;
         }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        if let Ok(mut cache) = self.content_cache.write() {
+            cache.remove(&params.text_document.uri);
+        }
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let Some(repo) = self.open_repo() else {
+            return Ok(None);
+        };
+
+        let uri = &params.text_document.uri;
+        let content = {
+            let cache = self.content_cache.read().ok();
+            cache.and_then(|c| c.get(uri).cloned())
+        };
+        let Some(content) = content else {
+            return Ok(None);
+        };
+
+        let Some(blob_oid) = Self::hash_content(&repo, content.as_bytes()) else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self::hints_for_blob(&repo, &blob_oid)))
     }
 }
 
