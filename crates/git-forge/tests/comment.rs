@@ -1,5 +1,10 @@
 //! Integration tests for comment chains.
-#![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
+#![allow(
+    clippy::must_use_candidate,
+    clippy::missing_panics_doc,
+    missing_docs,
+    deprecated
+)]
 
 use git2::Repository;
 use tempfile::TempDir;
@@ -7,7 +12,8 @@ use tempfile::TempDir;
 use git_forge::Store;
 use git_forge::comment::list_thread;
 use git_forge::comment::{
-    Anchor, add_comment, add_reply, edit_comment, issue_comment_ref, list_comments, resolve_comment,
+    LegacyAnchor as Anchor, add_comment, add_reply, edit_comment, issue_comment_ref, list_comments,
+    resolve_comment,
 };
 use git_forge::exe::Executor;
 

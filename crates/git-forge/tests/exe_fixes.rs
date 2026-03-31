@@ -1,5 +1,10 @@
 //! Regression tests for executor fixes.
-#![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
+#![allow(
+    clippy::must_use_candidate,
+    clippy::missing_panics_doc,
+    missing_docs,
+    deprecated
+)]
 
 use std::fs;
 use std::path::Path;
@@ -8,7 +13,7 @@ use git2::Repository;
 use tempfile::TempDir;
 
 use git_forge::Error;
-use git_forge::comment::Anchor;
+use git_forge::comment::LegacyAnchor as Anchor;
 use git_forge::exe::Executor;
 use git_forge::review::ReviewTarget;
 

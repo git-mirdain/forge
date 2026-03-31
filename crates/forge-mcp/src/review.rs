@@ -1,4 +1,6 @@
 //! MCP tool definitions for forge reviews and review comments.
+// Uses v1 comment functions temporarily until Phase 9 MCP update.
+#![allow(deprecated)]
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};

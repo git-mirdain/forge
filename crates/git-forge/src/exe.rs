@@ -3,6 +3,8 @@
 //! [`Executor`] owns a [`git2::Repository`] and exposes typed methods for each
 //! forge operation. The `run` method (available with the `cli` feature) dispatches
 //! from a parsed [`crate::cli::Cli`] and writes output to stdout.
+// v1 comment functions are kept temporarily until Phase 12 cleanup.
+#![allow(deprecated)]
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -13,8 +15,8 @@ use git2::{ErrorCode, ObjectType, Repository};
 use serde::Serialize;
 
 use crate::comment::{
-    Anchor, Comment, add_comment, add_reply, issue_comment_ref, list_comments, object_comment_ref,
-    resolve_comment, review_comment_ref,
+    Comment, LegacyAnchor as Anchor, add_comment, add_reply, issue_comment_ref, list_comments,
+    object_comment_ref, resolve_comment, review_comment_ref,
 };
 use crate::issue::{Issue, IssueState};
 use crate::refs::walk_tree;
@@ -2209,7 +2211,9 @@ fn migrate_carry_forward_comments(
 
 /// Migrate carry-forward comments for a single diff delta.
 fn migrate_delta(repo: &Repository, diff: &git2::Diff<'_>, delta_idx: usize) -> Result<usize> {
-    use crate::comment::{Anchor, list_comments, migrate_comment, object_comment_ref};
+    use crate::comment::{
+        LegacyAnchor as Anchor, list_comments, migrate_comment, object_comment_ref,
+    };
 
     let delta = diff.get_delta(delta_idx).unwrap();
     if !matches!(

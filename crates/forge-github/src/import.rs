@@ -1,4 +1,6 @@
 //! GitHub → forge import functions.
+// Uses v1 comment functions temporarily until cleanup.
+#![allow(deprecated)]
 
 use std::collections::HashMap;
 

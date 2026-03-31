@@ -3,7 +3,8 @@
     clippy::must_use_candidate,
     clippy::missing_panics_doc,
     clippy::return_self_not_must_use,
-    missing_docs
+    missing_docs,
+    deprecated
 )]
 
 use std::cell::{Cell, RefCell};
@@ -528,7 +529,7 @@ async fn export_anchored_review_comment_uses_review_api() {
 
     // Add an anchored comment with a path.
     let ref_name = review_comment_ref(&review.oid);
-    let anchor = git_forge::comment::Anchor::Object {
+    let anchor = git_forge::comment::LegacyAnchor::Object {
         oid: commit,
         path: Some("src/main.rs".to_string()),
         range: Some("42-42".to_string()),

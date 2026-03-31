@@ -1,5 +1,10 @@
 //! Integration tests for GitHub issue comment import/export.
-#![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
+#![allow(
+    clippy::must_use_candidate,
+    clippy::missing_panics_doc,
+    missing_docs,
+    deprecated
+)]
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};

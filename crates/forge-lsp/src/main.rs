@@ -1,4 +1,6 @@
 //! Forge LSP server — surfaces inline comments as inlay hints.
+// Uses v1 comment functions temporarily until Phase 10 LSP update.
+#![allow(deprecated)]
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -15,7 +17,7 @@ use tower_lsp::lsp_types::{
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-use git_forge::comment::{self, Anchor, Comment, object_comment_ref};
+use git_forge::comment::{self, Comment, LegacyAnchor as Anchor, object_comment_ref};
 
 struct ForgeLanguageServer {
     client: Client,

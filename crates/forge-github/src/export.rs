@@ -1,4 +1,6 @@
 //! forge → GitHub export functions.
+// Uses v1 comment types temporarily until cleanup.
+#![allow(deprecated)]
 
 use std::collections::HashMap;
 
@@ -292,14 +294,16 @@ async fn export_review_comments_with_state(
         // For plain comments (no anchor), fall back to issue comment API on the PR.
         if let Some(ref anchor) = comment.anchor {
             let (commit_id, path, line) = match anchor {
-                git_forge::comment::Anchor::Object { oid, path, range } => {
+                git_forge::comment::LegacyAnchor::Object { oid, path, range } => {
                     let line = range
                         .as_ref()
-                        .and_then(|r| r.split('-').next()?.parse::<u32>().ok())
+                        .and_then(|r: &String| r.split('-').next()?.parse::<u32>().ok())
                         .unwrap_or(1);
                     (oid.as_str(), path.as_deref().unwrap_or(""), line)
                 }
-                git_forge::comment::Anchor::CommitRange { start, .. } => (start.as_str(), "", 1),
+                git_forge::comment::LegacyAnchor::CommitRange { start, .. } => {
+                    (start.as_str(), "", 1u32)
+                }
             };
 
             // Only create review comment if we have a real path; otherwise fall back.

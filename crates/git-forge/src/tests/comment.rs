@@ -1,4 +1,5 @@
-use crate::comment::{Anchor, format_trailers, parse_trailers};
+#![allow(deprecated)]
+use crate::comment::{LegacyAnchor as Anchor, format_trailers, parse_trailers};
 
 #[test]
 fn parse_trailers_no_trailers() {
