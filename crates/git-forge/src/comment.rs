@@ -1,6 +1,4 @@
 //! Comment chains backed by `git-chain`.
-// v1 types are kept temporarily until Phase 12 cleanup.
-#![allow(deprecated)]
 
 use std::collections::HashMap;
 
@@ -10,17 +8,10 @@ use git2::{ObjectType, Oid, Repository};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::refs::{
-    COMMENTS_INDEX, COMMENTS_PREFIX, ISSUE_COMMENTS_PREFIX, OBJECT_COMMENTS_PREFIX,
-    REVIEW_COMMENTS_PREFIX,
-};
+use crate::refs::{COMMENTS_INDEX, COMMENTS_PREFIX};
 use crate::{Error, Result};
 
-// ---------------------------------------------------------------------------
-// v2 types
-// ---------------------------------------------------------------------------
-
-/// The anchor target for a comment (v2).
+/// The anchor target for a comment.
 ///
 /// A comment can anchor to any git object: a blob, a commit, or a tree.
 /// Line range is meaningful only for blob anchors.
@@ -33,37 +24,6 @@ pub struct Anchor {
     /// End line — only meaningful for blob anchors.
     pub end_line: Option<u32>,
 }
-
-// ---------------------------------------------------------------------------
-// Legacy types (v1 — kept for backward compat; deprecated)
-// ---------------------------------------------------------------------------
-
-/// The anchor target for a comment (v1, deprecated).
-#[deprecated(note = "use v2 `Anchor` struct instead")]
-#[derive(Debug, Clone, Serialize, Facet)]
-#[repr(u8)]
-pub enum LegacyAnchor {
-    /// A single object (blob or commit), with an optional line range.
-    Object {
-        /// The target object OID.
-        oid: String,
-        /// Optional file path within the target (for commit-anchored comments).
-        path: Option<String>,
-        /// Optional line range, e.g. `"42-47"`.
-        range: Option<String>,
-    },
-    /// A commit range.
-    CommitRange {
-        /// Start commit OID.
-        start: String,
-        /// End commit OID.
-        end: String,
-    },
-}
-
-// ---------------------------------------------------------------------------
-// Comment struct
-// ---------------------------------------------------------------------------
 
 /// A single comment event in a chain.
 #[derive(Debug, Clone, Serialize, Facet)]
@@ -78,55 +38,23 @@ pub struct Comment {
     pub author_email: String,
     /// Unix timestamp (seconds since epoch).
     pub timestamp: i64,
-    /// Optional anchor pointing to a target object (v1 format).
-    #[allow(deprecated)]
-    pub anchor: Option<LegacyAnchor>,
+    /// Optional anchor pointing to a target object.
+    pub anchor: Option<Anchor>,
     /// Whether this comment resolves a thread.
     pub resolved: bool,
     /// OID of the original comment this replaces (edit marker).
     pub replaces: Option<String>,
-    /// OID of the comment this was migrated from (cross-chain carry-forward).
-    pub migrated_from: Option<String>,
     /// OID of the comment this is a reply to.
     pub reply_to: Option<String>,
     /// Tree OID of the chain commit.
     pub tree: String,
     /// Surrounding source lines stored in the comment tree (v2).
     pub context_lines: Option<String>,
-    /// UUID of the thread this comment belongs to (from `Comment-Id` trailer, v2).
+    /// UUID of the thread this comment belongs to (from `Comment-Id` trailer).
     pub thread_id: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// v1 ref helpers (deprecated)
-// ---------------------------------------------------------------------------
-
-/// Return the chain ref name for issue comments.
-#[must_use]
-#[deprecated(note = "use v2 per-thread refs via `comment_thread_ref`")]
-pub fn issue_comment_ref(oid: &str) -> String {
-    format!("{ISSUE_COMMENTS_PREFIX}{oid}")
-}
-
-/// Return the chain ref name for review comments.
-#[must_use]
-#[deprecated(note = "use v2 per-thread refs via `comment_thread_ref`")]
-pub fn review_comment_ref(oid: &str) -> String {
-    format!("{REVIEW_COMMENTS_PREFIX}{oid}")
-}
-
-/// Return the chain ref name for standalone object comments.
-#[must_use]
-#[deprecated(note = "use v2 per-thread refs via `comment_thread_ref`")]
-pub fn object_comment_ref(oid: &str) -> String {
-    format!("{OBJECT_COMMENTS_PREFIX}{oid}")
-}
-
-// ---------------------------------------------------------------------------
-// v2 ref helper
-// ---------------------------------------------------------------------------
-
-/// Return the chain ref name for a v2 comment thread.
+/// Return the chain ref name for a comment thread.
 #[must_use]
 pub fn comment_thread_ref(thread_id: &str) -> String {
     format!("{COMMENTS_PREFIX}{thread_id}")
@@ -152,48 +80,8 @@ const KNOWN_TRAILER_KEYS: &[&str] = &[
     TRAILER_COMMENT_ID,
 ];
 
-/// Build a trailer block from anchor, resolved flag, replaces OID,
-/// migrated-from OID, and optional comment-id.
-#[must_use]
-#[allow(deprecated)]
-pub fn format_trailers(
-    anchor: Option<&LegacyAnchor>,
-    resolved: bool,
-    replaces: Option<&str>,
-    migrated_from: Option<&str>,
-) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    if let Some(a) = anchor {
-        match a {
-            LegacyAnchor::Object { oid, path, range } => {
-                lines.push(format!("Anchor: {oid}"));
-                if let Some(p) = path {
-                    lines.push(format!("Anchor-Path: {p}"));
-                }
-                if let Some(r) = range {
-                    lines.push(format!("Anchor-Range: {r}"));
-                }
-            }
-            LegacyAnchor::CommitRange { start, end } => {
-                lines.push(format!("Anchor: {start}"));
-                lines.push(format!("Anchor-End: {end}"));
-            }
-        }
-    }
-    if resolved {
-        lines.push("Resolved: true".to_string());
-    }
-    if let Some(oid) = replaces {
-        lines.push(format!("Replaces: {oid}"));
-    }
-    if let Some(oid) = migrated_from {
-        lines.push(format!("Migrated-From: {oid}"));
-    }
-    lines.join("\n")
-}
-
-/// Build a v2 trailer block for thread operations.
-fn format_v2_trailers(
+/// Build a trailer block for thread operations.
+fn format_trailers(
     anchor_oid: &str,
     anchor_range: Option<(u32, u32)>,
     thread_id: &str,
@@ -261,7 +149,6 @@ pub fn parse_trailers(message: &str) -> (String, HashMap<String, String>) {
 ///
 /// # Errors
 /// Returns an error if the commit cannot be found in `repo`.
-#[allow(deprecated)]
 pub fn comment_from_chain_entry(repo: &Repository, entry: &ChainEntry) -> Result<Comment> {
     let commit = repo.find_commit(entry.commit)?;
     let author = commit.author();
@@ -272,29 +159,22 @@ pub fn comment_from_chain_entry(repo: &Repository, entry: &ChainEntry) -> Result
 
     let (body, trailers) = parse_trailers(&entry.message);
 
-    let anchor = if let Some(anchor_oid) = trailers.get("Anchor") {
-        if let Some(end) = trailers.get("Anchor-End") {
-            Some(LegacyAnchor::CommitRange {
-                start: anchor_oid.clone(),
-                end: end.clone(),
-            })
-        } else {
-            Some(LegacyAnchor::Object {
-                oid: anchor_oid.clone(),
-                path: trailers.get("Anchor-Path").cloned(),
-                range: trailers.get("Anchor-Range").cloned(),
-            })
+    let anchor = trailers.get("Anchor").map(|anchor_oid| {
+        let (start_line, end_line) = trailers
+            .get("Anchor-Range")
+            .and_then(|r| parse_anchor_range(r))
+            .unwrap_or((None, None));
+        Anchor {
+            oid: anchor_oid.clone(),
+            start_line,
+            end_line,
         }
-    } else {
-        None
-    };
+    });
 
     let resolved = trailers.get("Resolved").is_some_and(|v| v == "true");
     let replaces = trailers.get("Replaces").cloned();
-    let migrated_from = trailers.get("Migrated-From").cloned();
     let thread_id = trailers.get(TRAILER_COMMENT_ID).cloned();
 
-    // Attempt to read context_lines from tree blob "context".
     let context_lines = read_tree_blob(repo, entry.tree, "context");
 
     Ok(Comment {
@@ -306,12 +186,21 @@ pub fn comment_from_chain_entry(repo: &Repository, entry: &ChainEntry) -> Result
         anchor,
         resolved,
         replaces,
-        migrated_from,
         reply_to,
         tree: entry.tree.to_string(),
         context_lines,
         thread_id,
     })
+}
+
+/// Parse an anchor range string like `"42-47"` or `"42"` into `(start, end)`.
+fn parse_anchor_range(range: &str) -> Option<(Option<u32>, Option<u32>)> {
+    if let Some((a, b)) = range.split_once('-') {
+        Some((a.parse().ok(), b.parse().ok()))
+    } else {
+        let n: u32 = range.parse().ok()?;
+        Some((Some(n), Some(n)))
+    }
 }
 
 /// Read a UTF-8 blob entry from a git tree by name.
@@ -446,7 +335,7 @@ pub fn create_thread(
 
     let anchor_oid_str = anchor.map_or("", |a| a.oid.as_str());
     let anchor_range = anchor.and_then(|a| a.start_line.zip(a.end_line));
-    let trailers = format_v2_trailers(anchor_oid_str, anchor_range, &thread_id, false, None);
+    let trailers = format_trailers(anchor_oid_str, anchor_range, &thread_id, false, None);
     let message = build_message(body, &trailers);
     let tree = build_comment_tree(repo, body, anchor, context_lines)?;
     let entry = repo.append(&ref_name, &message, tree, None)?;
@@ -479,7 +368,7 @@ pub fn reply_to_thread(
         effective_range = None;
     }
 
-    let trailers = format_v2_trailers(
+    let trailers = format_trailers(
         &effective_anchor_oid,
         effective_range,
         thread_id,
@@ -507,7 +396,7 @@ pub fn resolve_thread(
     let anchor_oid = tip_anchor_oid(repo, &ref_name).unwrap_or_default();
 
     let body = message.unwrap_or("");
-    let trailers = format_v2_trailers(&anchor_oid, None, thread_id, true, None);
+    let trailers = format_trailers(&anchor_oid, None, thread_id, true, None);
     let msg = build_message(body, &trailers);
 
     // Resolution tree: body only, no anchor object (inheriting anchor)
@@ -553,7 +442,7 @@ pub fn edit_in_thread(
         effective_range = None;
     }
 
-    let trailers = format_v2_trailers(
+    let trailers = format_trailers(
         &effective_anchor_oid,
         effective_range,
         thread_id,
@@ -783,155 +672,4 @@ pub fn index_lookup(repo: &Repository, oid: &str) -> Result<Option<Vec<String>>>
         .map(str::to_string)
         .collect();
     Ok(Some(ids))
-}
-
-// ---------------------------------------------------------------------------
-// v1 operations (deprecated)
-// ---------------------------------------------------------------------------
-
-/// Resolve an OID prefix to a full OID from the comment chain.
-fn resolve_comment_oid(repo: &Repository, ref_name: &str, prefix: &str) -> Result<Oid> {
-    if prefix.len() == 40 {
-        return Ok(Oid::from_str(prefix)?);
-    }
-    let entries = repo.walk(ref_name, None)?;
-    let matches: Vec<_> = entries
-        .iter()
-        .filter(|e| e.commit.to_string().starts_with(prefix))
-        .collect();
-    match matches.len() {
-        0 => Err(Error::NotFound(prefix.to_string())),
-        1 => Ok(matches[0].commit),
-        _ => Err(Error::Ambiguous(prefix.to_string())),
-    }
-}
-
-/// Append a new top-level comment to a chain.
-///
-/// # Errors
-/// Returns an error if the git operation fails.
-#[deprecated(note = "use `create_thread` instead")]
-#[allow(deprecated)]
-pub fn add_comment(
-    repo: &Repository,
-    ref_name: &str,
-    body: &str,
-    anchor: Option<&LegacyAnchor>,
-) -> Result<Comment> {
-    let trailers = format_trailers(anchor, false, None, None);
-    let message = build_message(body, &trailers);
-    let tree = repo.build_tree(&[])?;
-    let entry = repo.append(ref_name, &message, tree, None)?;
-    comment_from_chain_entry(repo, &entry)
-}
-
-/// Append a reply to an existing comment.
-///
-/// # Errors
-/// Returns an error if the git operation fails.
-#[deprecated(note = "use `reply_to_thread` instead")]
-#[allow(deprecated)]
-pub fn add_reply(
-    repo: &Repository,
-    ref_name: &str,
-    body: &str,
-    reply_to_oid: &str,
-    anchor: Option<&LegacyAnchor>,
-) -> Result<Comment> {
-    let trailers = format_trailers(anchor, false, None, None);
-    let message = build_message(body, &trailers);
-    let tree = repo.build_tree(&[])?;
-    let parent = resolve_comment_oid(repo, ref_name, reply_to_oid)?;
-    let entry = repo.append(ref_name, &message, tree, Some(parent))?;
-    comment_from_chain_entry(repo, &entry)
-}
-
-/// Append a resolution marker to a thread.
-///
-/// # Errors
-/// Returns an error if the git operation fails.
-#[deprecated(note = "use `resolve_thread` instead")]
-pub fn resolve_comment(
-    repo: &Repository,
-    ref_name: &str,
-    reply_to_oid: &str,
-    message: Option<&str>,
-) -> Result<Comment> {
-    let body = message.unwrap_or("");
-    let trailers = format_trailers(None, true, None, None);
-    let msg = build_message(body, &trailers);
-    let tree = repo.build_tree(&[])?;
-    let parent = resolve_comment_oid(repo, ref_name, reply_to_oid)?;
-    let entry = repo.append(ref_name, &msg, tree, Some(parent))?;
-    comment_from_chain_entry(repo, &entry)
-}
-
-/// Append an edit marker that supersedes an original comment.
-///
-/// # Errors
-/// Returns an error if the git operation fails.
-#[deprecated(note = "use `edit_in_thread` instead")]
-#[allow(deprecated)]
-pub fn edit_comment(
-    repo: &Repository,
-    ref_name: &str,
-    original_oid: &str,
-    new_body: &str,
-    anchor: Option<&LegacyAnchor>,
-) -> Result<Comment> {
-    let parent = resolve_comment_oid(repo, ref_name, original_oid)?;
-    let parent_str = parent.to_string();
-    let trailers = format_trailers(anchor, false, Some(&parent_str), None);
-    let message = build_message(new_body, &trailers);
-    let tree = repo.build_tree(&[])?;
-    let entry = repo.append(ref_name, &message, tree, Some(parent))?;
-    comment_from_chain_entry(repo, &entry)
-}
-
-/// List all comments in a chain (tip-first order).
-///
-/// # Errors
-/// Returns an error if the git operation fails.
-#[deprecated(note = "use `list_thread_comments` instead")]
-pub fn list_comments(repo: &Repository, ref_name: &str) -> Result<Vec<Comment>> {
-    let entries = repo.walk(ref_name, None)?;
-    entries
-        .iter()
-        .map(|e| comment_from_chain_entry(repo, e))
-        .collect()
-}
-
-/// List all comments in a thread rooted at `root_oid`.
-///
-/// # Errors
-/// Returns an error if the git operation fails.
-#[deprecated(note = "use `list_thread_comments` instead")]
-pub fn list_thread(repo: &Repository, ref_name: &str, root_oid: &str) -> Result<Vec<Comment>> {
-    let oid = resolve_comment_oid(repo, ref_name, root_oid)?;
-    let entries = repo.walk(ref_name, Some(oid))?;
-    entries
-        .iter()
-        .map(|e| comment_from_chain_entry(repo, e))
-        .collect()
-}
-
-/// Migrate a comment to a different chain, recording the original OID via
-/// the `Migrated-From` trailer.
-///
-/// # Errors
-/// Returns an error if the git operation fails.
-#[deprecated(note = "migration is no longer needed in v2")]
-#[allow(deprecated)]
-pub fn migrate_comment(
-    repo: &Repository,
-    target_ref: &str,
-    body: &str,
-    anchor: Option<&LegacyAnchor>,
-    migrated_from: &str,
-) -> Result<Comment> {
-    let trailers = format_trailers(anchor, false, None, Some(migrated_from));
-    let message = build_message(body, &trailers);
-    let tree = repo.build_tree(&[])?;
-    let entry = repo.append(target_ref, &message, tree, None)?;
-    comment_from_chain_entry(repo, &entry)
 }

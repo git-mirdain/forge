@@ -1,10 +1,5 @@
 //! Integration tests for GitHub issue comment import/export.
-#![allow(
-    clippy::must_use_candidate,
-    clippy::missing_panics_doc,
-    missing_docs,
-    deprecated
-)]
+#![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
@@ -15,7 +10,7 @@ use forge_github::config::GitHubSyncConfig;
 use forge_github::export::{export_issue_comments, export_issues};
 use forge_github::import::{import_issue_comments, import_issues};
 use git_forge::Store;
-use git_forge::comment::{add_comment, issue_comment_ref, list_comments};
+use git_forge::comment::{Anchor, create_thread, find_threads_by_object, list_thread_comments};
 use git2::Repository;
 use tempfile::TempDir;
 
@@ -249,8 +244,11 @@ async fn import_issue_comments_adds_chain() {
 
     let store = Store::new(&repo);
     let issue = store.get_issue("GH#1").unwrap();
-    let ref_name = issue_comment_ref(&issue.oid);
-    let comments = list_comments(&repo, &ref_name).unwrap();
+    let thread_ids = find_threads_by_object(&repo, &issue.oid).unwrap();
+    let comments: Vec<_> = thread_ids
+        .iter()
+        .flat_map(|tid| list_thread_comments(&repo, tid).unwrap())
+        .collect();
     assert_eq!(comments.len(), 2);
 }
 
@@ -283,8 +281,12 @@ async fn export_issue_comment_creates_github_comment() {
     export_issues(&repo, &cfg, &client).await.unwrap();
 
     // Add a local comment.
-    let ref_name = issue_comment_ref(&issue.oid);
-    let comment = add_comment(&repo, &ref_name, "my comment", None).unwrap();
+    let anchor = Anchor {
+        oid: issue.oid.clone(),
+        start_line: None,
+        end_line: None,
+    };
+    let (_tid, comment) = create_thread(&repo, "my comment", Some(&anchor), None).unwrap();
 
     // Re-export: should pick up the new comment.
     let report = export_issues(&repo, &cfg, &client).await.unwrap();
@@ -313,8 +315,12 @@ async fn export_comment_skips_already_exported() {
     let issue = store.create_issue("Local issue", "body", &[], &[]).unwrap();
     export_issues(&repo, &cfg, &client).await.unwrap();
 
-    let ref_name = issue_comment_ref(&issue.oid);
-    add_comment(&repo, &ref_name, "my comment", None).unwrap();
+    let anchor = Anchor {
+        oid: issue.oid.clone(),
+        start_line: None,
+        end_line: None,
+    };
+    create_thread(&repo, "my comment", Some(&anchor), None).unwrap();
 
     let r1 = export_issues(&repo, &cfg, &client).await.unwrap();
     assert_eq!(r1.exported, 1);
@@ -335,8 +341,12 @@ async fn roundtrip_comments_no_duplicates() {
     let issue = store.create_issue("Bug", "body", &[], &[]).unwrap();
     export_issues(&repo, &cfg, &export_client).await.unwrap();
 
-    let ref_name = issue_comment_ref(&issue.oid);
-    add_comment(&repo, &ref_name, "a comment", None).unwrap();
+    let anchor = Anchor {
+        oid: issue.oid.clone(),
+        start_line: None,
+        end_line: None,
+    };
+    create_thread(&repo, "a comment", Some(&anchor), None).unwrap();
     export_issues(&repo, &cfg, &export_client).await.unwrap();
 
     // Now import: the comment from GitHub would have the same content.
@@ -351,8 +361,12 @@ async fn roundtrip_comments_no_duplicates() {
     assert_eq!(report.imported, 1); // 1 new github comment
 
     // Verify only one extra chain entry (the imported github comment).
-    let comments = list_comments(&repo, &ref_name).unwrap();
-    assert_eq!(comments.len(), 2); // our local + the imported one
+    let thread_ids = find_threads_by_object(&repo, &issue.oid).unwrap();
+    let all_comments: Vec<_> = thread_ids
+        .iter()
+        .flat_map(|tid| list_thread_comments(&repo, tid).unwrap())
+        .collect();
+    assert_eq!(all_comments.len(), 2); // our local + the imported one
 }
 
 #[tokio::test]
@@ -369,8 +383,11 @@ async fn import_comments_for_new_issue_in_same_pass() {
 
     let store = Store::new(&repo);
     let issue = store.get_issue("GH#5").unwrap();
-    let ref_name = issue_comment_ref(&issue.oid);
-    let comments = list_comments(&repo, &ref_name).unwrap();
+    let thread_ids = find_threads_by_object(&repo, &issue.oid).unwrap();
+    let comments: Vec<_> = thread_ids
+        .iter()
+        .flat_map(|tid| list_thread_comments(&repo, tid).unwrap())
+        .collect();
     assert_eq!(comments.len(), 1);
     assert!(comments[0].body.contains("comment on new issue"));
 }
@@ -388,10 +405,12 @@ async fn import_comment_with_empty_body() {
 
     let store = Store::new(&repo);
     let issue = store.get_issue("GH#1").unwrap();
-    let ref_name = issue_comment_ref(&issue.oid);
-    let comments = list_comments(&repo, &ref_name).unwrap();
+    let thread_ids = find_threads_by_object(&repo, &issue.oid).unwrap();
+    let comments: Vec<_> = thread_ids
+        .iter()
+        .flat_map(|tid| list_thread_comments(&repo, tid).unwrap())
+        .collect();
     assert_eq!(comments.len(), 1);
-    // Empty body should only produce the Github-Id trailer, which is parsed out.
     assert!(comments[0].body.is_empty());
 }
 
@@ -414,8 +433,11 @@ async fn standalone_import_issue_comments() {
 
     let store = Store::new(&repo);
     let issue = store.get_issue("GH#1").unwrap();
-    let ref_name = issue_comment_ref(&issue.oid);
-    let comments = list_comments(&repo, &ref_name).unwrap();
+    let thread_ids = find_threads_by_object(&repo, &issue.oid).unwrap();
+    let comments: Vec<_> = thread_ids
+        .iter()
+        .flat_map(|tid| list_thread_comments(&repo, tid).unwrap())
+        .collect();
     assert_eq!(comments.len(), 1);
     assert!(comments[0].body.contains("standalone import"));
 }
@@ -447,8 +469,12 @@ async fn standalone_export_issue_comments() {
     export_issues(&repo, &cfg, &client).await.unwrap();
 
     // Add a comment and export via standalone function.
-    let ref_name = issue_comment_ref(&issue.oid);
-    add_comment(&repo, &ref_name, "standalone export", None).unwrap();
+    let anchor = Anchor {
+        oid: issue.oid.clone(),
+        start_line: None,
+        end_line: None,
+    };
+    create_thread(&repo, "standalone export", Some(&anchor), None).unwrap();
 
     let report = export_issue_comments(&repo, &cfg, &client, &issue.oid)
         .await
@@ -472,11 +498,12 @@ async fn imported_comment_body_strips_github_id_trailer() {
 
     let store = Store::new(&repo);
     let issue = store.get_issue("GH#1").unwrap();
-    let ref_name = issue_comment_ref(&issue.oid);
-    let comments = list_comments(&repo, &ref_name).unwrap();
+    let thread_ids = find_threads_by_object(&repo, &issue.oid).unwrap();
+    let comments: Vec<_> = thread_ids
+        .iter()
+        .flat_map(|tid| list_thread_comments(&repo, tid).unwrap())
+        .collect();
     assert_eq!(comments.len(), 1);
-    // The stored message includes "Github-Id: 10" as a trailer, but
-    // list_comments must strip it so consumers see only the original body.
     assert_eq!(comments[0].body, "hello from github");
 }
 

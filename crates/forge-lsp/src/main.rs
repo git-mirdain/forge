@@ -82,34 +82,17 @@ impl ForgeLanguageServer {
 }
 
 fn comment_position(comment: &Comment) -> Position {
-    // thread_id is set for v2 comments; use the anchor from the commit message.
-    // The v2 Anchor is parsed from the "Anchor: <oid>" + "Anchor-Range: start-end"
-    // trailers and stored as LegacyAnchor::Object { range, .. }.
-    // Read start_line from the legacy range field for now.
-    #[allow(deprecated)]
-    if let Some(git_forge::comment::LegacyAnchor::Object {
-        range: Some(range), ..
-    }) = &comment.anchor
-        && let Some((start, _)) = parse_range_start(range)
+    if let Some(anchor) = &comment.anchor
+        && let Some(start) = anchor.start_line
     {
         return Position {
-            #[allow(clippy::cast_possible_truncation)]
-            line: start.saturating_sub(1) as u32,
+            line: start.saturating_sub(1),
             character: u32::MAX,
         };
     }
     Position {
         line: 0,
         character: u32::MAX,
-    }
-}
-
-fn parse_range_start(range: &str) -> Option<(usize, usize)> {
-    if let Some((a, b)) = range.split_once('-') {
-        Some((a.parse().ok()?, b.parse().ok()?))
-    } else {
-        let n = range.parse().ok()?;
-        Some((n, n))
     }
 }
 

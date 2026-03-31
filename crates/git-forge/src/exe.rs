@@ -3,8 +3,6 @@
 //! [`Executor`] owns a [`git2::Repository`] and exposes typed methods for each
 //! forge operation. The `run` method (available with the `cli` feature) dispatches
 //! from a parsed [`crate::cli::Cli`] and writes output to stdout.
-// v1 comment functions are kept temporarily until Phase 12 cleanup.
-#![allow(deprecated)]
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -15,9 +13,8 @@ use git2::{ErrorCode, ObjectType, Repository};
 use serde::Serialize;
 
 use crate::comment::{
-    Anchor as V2Anchor, Comment, LegacyAnchor as Anchor, add_comment, add_reply, create_thread,
-    find_threads_by_object, issue_comment_ref, list_comments, list_thread_comments,
-    object_comment_ref, reply_to_thread, resolve_comment, resolve_thread, review_comment_ref,
+    Anchor, Comment, create_thread, find_threads_by_object, list_thread_comments, reply_to_thread,
+    resolve_thread,
 };
 use crate::issue::{Issue, IssueState};
 use crate::refs::walk_tree;
@@ -134,66 +131,6 @@ impl Executor {
             remove_assignees,
         )
     }
-    /// Add a comment to an issue.
-    ///
-    /// # Errors
-    /// Returns an error if the issue is not found or a git operation fails.
-    #[deprecated(note = "use `create_comment` instead")]
-    pub fn add_issue_comment(
-        &self,
-        issue_ref: &str,
-        body: &str,
-        anchor: Option<&Anchor>,
-    ) -> Result<Comment> {
-        let issue = self.store().get_issue(issue_ref)?;
-        let ref_name = issue_comment_ref(&issue.oid);
-        add_comment(&self.repo, &ref_name, body, anchor)
-    }
-
-    /// Reply to a comment on an issue.
-    ///
-    /// # Errors
-    /// Returns an error if the issue is not found or a git operation fails.
-    #[deprecated(note = "use `reply_comment` instead")]
-    pub fn reply_issue_comment(
-        &self,
-        issue_ref: &str,
-        body: &str,
-        reply_to_oid: &str,
-        anchor: Option<&Anchor>,
-    ) -> Result<Comment> {
-        let issue = self.store().get_issue(issue_ref)?;
-        let ref_name = issue_comment_ref(&issue.oid);
-        add_reply(&self.repo, &ref_name, body, reply_to_oid, anchor)
-    }
-
-    /// Resolve a comment thread on an issue.
-    ///
-    /// # Errors
-    /// Returns an error if the issue is not found or a git operation fails.
-    #[deprecated(note = "use `resolve_comment_thread` instead")]
-    pub fn resolve_issue_comment(
-        &self,
-        issue_ref: &str,
-        thread_oid: &str,
-        message: Option<&str>,
-    ) -> Result<Comment> {
-        let issue = self.store().get_issue(issue_ref)?;
-        let ref_name = issue_comment_ref(&issue.oid);
-        resolve_comment(&self.repo, &ref_name, thread_oid, message)
-    }
-
-    /// List comments on an issue.
-    ///
-    /// # Errors
-    /// Returns an error if the issue is not found or a git operation fails.
-    #[deprecated(note = "use `list_comments_on` instead")]
-    pub fn list_issue_comments(&self, issue_ref: &str) -> Result<Vec<Comment>> {
-        let issue = self.store().get_issue(issue_ref)?;
-        let ref_name = issue_comment_ref(&issue.oid);
-        list_comments(&self.repo, &ref_name)
-    }
-
     // -----------------------------------------------------------------------
     // Reviews
     // -----------------------------------------------------------------------
@@ -277,186 +214,7 @@ impl Executor {
     }
 
     // -----------------------------------------------------------------------
-    // Review comments
-    // -----------------------------------------------------------------------
-
-    /// Add a comment to a review.
-    ///
-    /// # Errors
-    /// Returns an error if the review is not found or a git operation fails.
-    #[deprecated(note = "use `create_comment` instead")]
-    pub fn add_review_comment(
-        &self,
-        review_ref: &str,
-        body: &str,
-        anchor: Option<&Anchor>,
-    ) -> Result<Comment> {
-        let review = self.store().get_review(review_ref)?;
-        let ref_name = if let Some(Anchor::Object { oid, .. }) = anchor
-            && let Ok(obj) = self
-                .repo
-                .find_object(git2::Oid::from_str(oid).unwrap_or(git2::Oid::zero()), None)
-            && obj.kind() == Some(ObjectType::Blob)
-        {
-            object_comment_ref(oid)
-        } else {
-            review_comment_ref(&review.oid)
-        };
-        add_comment(&self.repo, &ref_name, body, anchor)
-    }
-
-    /// Reply to a comment on a review.
-    ///
-    /// # Errors
-    /// Returns an error if the review is not found or a git operation fails.
-    #[deprecated(note = "use `reply_comment` instead")]
-    pub fn reply_review_comment(
-        &self,
-        review_ref: &str,
-        body: &str,
-        reply_to_oid: &str,
-        anchor: Option<&Anchor>,
-    ) -> Result<Comment> {
-        let review = self.store().get_review(review_ref)?;
-        let ref_name = if let Some(Anchor::Object { oid, .. }) = anchor
-            && let Ok(obj) = self
-                .repo
-                .find_object(git2::Oid::from_str(oid).unwrap_or(git2::Oid::zero()), None)
-            && obj.kind() == Some(ObjectType::Blob)
-        {
-            object_comment_ref(oid)
-        } else {
-            review_comment_ref(&review.oid)
-        };
-        add_reply(&self.repo, &ref_name, body, reply_to_oid, anchor)
-    }
-
-    /// Resolve a comment thread on a review.
-    ///
-    /// # Errors
-    /// Returns an error if the review is not found or a git operation fails.
-    #[deprecated(note = "use `resolve_comment_thread` instead")]
-    pub fn resolve_review_comment(
-        &self,
-        review_ref: &str,
-        thread_oid: &str,
-        message: Option<&str>,
-    ) -> Result<Comment> {
-        let review = self.store().get_review(review_ref)?;
-        let ref_name = review_comment_ref(&review.oid);
-        resolve_comment(&self.repo, &ref_name, thread_oid, message)
-    }
-
-    /// List comments on a review.
-    ///
-    /// Aggregates blob-anchored object comments from the review's target tree
-    /// with unanchored comments from the review chain.
-    ///
-    /// # Errors
-    /// Returns an error if the review is not found or a git operation fails.
-    #[deprecated(note = "use `list_comments_on` instead")]
-    pub fn list_review_comments(&self, review_ref: &str) -> Result<Vec<Comment>> {
-        let review = self.store().get_review(review_ref)?;
-        let mut comments = Vec::new();
-
-        // Collect blob-anchored comments from object chains.
-        let files = review_target_files(&self.repo, &review)?;
-        let mut seen_refs = std::collections::HashSet::new();
-        for (_, blob_oid) in &files {
-            if !seen_refs.insert(blob_oid.clone()) {
-                continue;
-            }
-            let ref_name = object_comment_ref(blob_oid);
-            match list_comments(&self.repo, &ref_name) {
-                Ok(cs) => comments.extend(cs),
-                Err(Error::Git(e)) if e.code() == ErrorCode::NotFound => {}
-                Err(e) => return Err(e),
-            }
-        }
-
-        // Collect review-level (unanchored) comments.
-        let ref_name = review_comment_ref(&review.oid);
-        match list_comments(&self.repo, &ref_name) {
-            Ok(cs) => comments.extend(cs),
-            Err(Error::Git(e)) if e.code() == ErrorCode::NotFound => {}
-            Err(e) => return Err(e),
-        }
-
-        comments.sort_by_key(|c| c.timestamp);
-        Ok(comments)
-    }
-
-    // -----------------------------------------------------------------------
-    // Standalone object comments
-    // -----------------------------------------------------------------------
-
-    /// Add a comment on a standalone git object.
-    ///
-    /// # Errors
-    /// Returns an error if the object is not found or a git operation fails.
-    #[deprecated(note = "use `create_comment` instead")]
-    pub fn add_object_comment(
-        &self,
-        object_oid: &str,
-        body: &str,
-        anchor: Option<&Anchor>,
-    ) -> Result<Comment> {
-        let obj = self
-            .repo
-            .find_object(git2::Oid::from_str(object_oid)?, None)
-            .map_err(|_| Error::NotFound(object_oid.to_string()))?;
-        match obj.kind() {
-            Some(ObjectType::Commit | ObjectType::Blob | ObjectType::Tag) => {}
-            Some(other) => return Err(Error::InvalidObjectType(other.to_string())),
-            None => return Err(Error::InvalidObjectType("unknown".into())),
-        }
-        let ref_name = object_comment_ref(object_oid);
-        add_comment(&self.repo, &ref_name, body, anchor)
-    }
-
-    /// Reply to a comment on a standalone git object.
-    ///
-    /// # Errors
-    /// Returns an error if a git operation fails.
-    #[deprecated(note = "use `reply_comment` instead")]
-    pub fn reply_object_comment(
-        &self,
-        object_oid: &str,
-        body: &str,
-        reply_to_oid: &str,
-        anchor: Option<&Anchor>,
-    ) -> Result<Comment> {
-        let ref_name = object_comment_ref(object_oid);
-        add_reply(&self.repo, &ref_name, body, reply_to_oid, anchor)
-    }
-
-    /// Resolve a comment thread on a standalone git object.
-    ///
-    /// # Errors
-    /// Returns an error if a git operation fails.
-    #[deprecated(note = "use `resolve_comment_thread` instead")]
-    pub fn resolve_object_comment(
-        &self,
-        object_oid: &str,
-        thread_oid: &str,
-        message: Option<&str>,
-    ) -> Result<Comment> {
-        let ref_name = object_comment_ref(object_oid);
-        resolve_comment(&self.repo, &ref_name, thread_oid, message)
-    }
-
-    /// List comments on a standalone git object.
-    ///
-    /// # Errors
-    /// Returns an error if a git operation fails.
-    #[deprecated(note = "use `list_comments_on` instead")]
-    pub fn list_object_comments(&self, object_oid: &str) -> Result<Vec<Comment>> {
-        let ref_name = object_comment_ref(object_oid);
-        list_comments(&self.repo, &ref_name)
-    }
-
-    // -----------------------------------------------------------------------
-    // v2 comment API
+    // Comment API
     // -----------------------------------------------------------------------
 
     /// Create a new comment thread, optionally anchored to a git object.
@@ -469,7 +227,7 @@ impl Executor {
     pub fn create_comment(
         &self,
         body: &str,
-        anchor: Option<&V2Anchor>,
+        anchor: Option<&Anchor>,
         context_lines: Option<&str>,
     ) -> Result<(String, Comment)> {
         let ctx = match anchor {
@@ -490,7 +248,7 @@ impl Executor {
         thread_id: &str,
         body: &str,
         reply_to_oid: &str,
-        anchor: Option<&V2Anchor>,
+        anchor: Option<&Anchor>,
         context_lines: Option<&str>,
     ) -> Result<Comment> {
         let ctx = match anchor {
@@ -1259,43 +1017,6 @@ impl Executor {
 
     /// Resolve `--issue`, `--review`, or `--object` to the comment chain ref name.
     ///
-    /// Validates that `--object` targets a commit, blob, or tag (not a bare tree).
-    #[doc(hidden)]
-    pub fn resolve_comment_entity(
-        &self,
-        issue: Option<&str>,
-        review: Option<&str>,
-        object: Option<&str>,
-    ) -> Result<String> {
-        if let Some(o) = object {
-            let obj = self
-                .repo
-                .revparse_single(o)
-                .map_err(|_| Error::NotFound(o.to_string()))?;
-            match obj.kind() {
-                Some(ObjectType::Commit | ObjectType::Blob | ObjectType::Tag) => {}
-                Some(other) => return Err(Error::InvalidObjectType(other.to_string())),
-                None => return Err(Error::InvalidObjectType("unknown".into())),
-            }
-            return Ok(object_comment_ref(&obj.id().to_string()));
-        }
-        let review = review.map(String::from).or_else(|| {
-            if issue.is_none() {
-                self.active_review()
-            } else {
-                None
-            }
-        });
-        if let Some(ref r) = review {
-            let review = self.store().get_review(r)?;
-            return Ok(review_comment_ref(&review.oid));
-        }
-        let issue_ref =
-            issue.ok_or_else(|| Error::Config("--issue, --review, or --object required".into()))?;
-        let issue = self.store().get_issue(issue_ref)?;
-        Ok(issue_comment_ref(&issue.oid))
-    }
-
     /// Dispatch a parsed CLI command, writing output to stdout.
     ///
     /// # Errors
@@ -2288,7 +2009,7 @@ pub fn should_interact(missing_input: bool) -> bool {
 }
 
 /// Build a v2 `Anchor` from a resolved OID and optional `"start[-end]"` lines string.
-fn build_v2_anchor(oid: &str, lines: Option<&str>) -> V2Anchor {
+fn build_v2_anchor(oid: &str, lines: Option<&str>) -> Anchor {
     let (start_line, end_line) = if let Some(r) = lines {
         if let Some((a, b)) = r.split_once('-') {
             (a.parse().ok(), b.parse().ok())
@@ -2299,7 +2020,7 @@ fn build_v2_anchor(oid: &str, lines: Option<&str>) -> V2Anchor {
     } else {
         (None, None)
     };
-    V2Anchor {
+    Anchor {
         oid: oid.to_string(),
         start_line,
         end_line,

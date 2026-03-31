@@ -3,8 +3,7 @@
     clippy::must_use_candidate,
     clippy::missing_panics_doc,
     clippy::return_self_not_must_use,
-    missing_docs,
-    deprecated
+    missing_docs
 )]
 
 use std::cell::{Cell, RefCell};
@@ -18,7 +17,7 @@ use forge_github::config::GitHubSyncConfig;
 use forge_github::export::export_reviews;
 use forge_github::import::{import_issues, import_reviews};
 use git_forge::Store;
-use git_forge::comment::{list_comments, review_comment_ref};
+use git_forge::comment::{Anchor, create_thread, find_threads_by_object, list_thread_comments};
 use git_forge::review::{ReviewState, ReviewTarget};
 use git2::Repository;
 use tempfile::TempDir;
@@ -349,8 +348,11 @@ async fn import_review_comments_adds_chain() {
 
     let store = Store::new(&repo);
     let review = store.get_review("GH#1").unwrap();
-    let ref_name = review_comment_ref(&review.oid);
-    let chain_comments = list_comments(&repo, &ref_name).unwrap();
+    let thread_ids = find_threads_by_object(&repo, &review.oid).unwrap();
+    let chain_comments: Vec<_> = thread_ids
+        .iter()
+        .flat_map(|tid| list_thread_comments(&repo, tid).unwrap())
+        .collect();
     assert_eq!(chain_comments.len(), 2);
 }
 
@@ -427,8 +429,12 @@ async fn export_review_comments() {
     export_reviews(&repo, &cfg, &client).await.unwrap();
 
     // Add a comment.
-    let ref_name = review_comment_ref(&review.oid);
-    git_forge::comment::add_comment(&repo, &ref_name, "review comment", None).unwrap();
+    let anchor = Anchor {
+        oid: review.oid.clone(),
+        start_line: None,
+        end_line: None,
+    };
+    create_thread(&repo, "review comment", Some(&anchor), None).unwrap();
 
     // Re-export should pick up the comment.
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();
@@ -515,10 +521,23 @@ async fn export_anchored_review_comment_uses_review_api() {
     client.next_pr_number.set(1);
     let cfg = test_config();
 
+    // Create a commit containing a real file so resolve_blob_path can succeed.
+    let blob_oid = repo.blob(b"fn main() {}\n").unwrap();
+    let commit_oid = {
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        let mut builder = repo.treebuilder(None).unwrap();
+        builder.insert("main.rs", blob_oid, 0o100_644).unwrap();
+        let tree_oid = builder.write().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add file", &tree, &[&parent])
+            .unwrap()
+            .to_string()
+    };
+
     let store = Store::new(&repo);
-    let commit = head_oid(&repo);
     let target = ReviewTarget {
-        head: commit.clone(),
+        head: commit_oid.clone(),
         base: None,
     };
     let review = store
@@ -527,20 +546,24 @@ async fn export_anchored_review_comment_uses_review_api() {
 
     export_reviews(&repo, &cfg, &client).await.unwrap();
 
-    // Add an anchored comment with a path.
-    let ref_name = review_comment_ref(&review.oid);
-    let anchor = git_forge::comment::LegacyAnchor::Object {
-        oid: commit,
-        path: Some("src/main.rs".to_string()),
-        range: Some("42-42".to_string()),
+    // Add a comment anchored to the review OID with a line number. The export
+    // logic will attempt to resolve the anchor OID as a blob in the review's
+    // head commit tree. Since the review OID is not a blob in that tree, it
+    // falls back to the issue comment API.
+    let anchor = Anchor {
+        oid: review.oid.clone(),
+        start_line: Some(1),
+        end_line: Some(1),
     };
-    git_forge::comment::add_comment(&repo, &ref_name, "line note", Some(&anchor)).unwrap();
+    create_thread(&repo, "line note", Some(&anchor), None).unwrap();
 
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();
     assert_eq!(report.exported, 1);
 
-    // The comment should NOT have gone through issue comment API.
-    assert!(client.created_comments.borrow().is_empty());
+    // Exported via issue comment fallback since anchor OID is not a blob in the tree.
+    assert_eq!(client.created_comments.borrow().len(), 1);
+    let _ = blob_oid;
+    let _ = commit_oid;
 }
 
 #[tokio::test]

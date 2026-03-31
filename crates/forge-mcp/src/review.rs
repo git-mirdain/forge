@@ -1,6 +1,4 @@
 //! MCP tool definitions for forge reviews and review comments.
-// Uses v1 comment functions temporarily until Phase 9 MCP update.
-#![allow(deprecated)]
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
@@ -8,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use git_forge::Store;
-use git_forge::comment::{list_comments, object_comment_ref, review_comment_ref};
+use git_forge::comment::{find_threads_by_object, list_thread_comments};
 use git_forge::refs::walk_tree;
 use git_forge::review::ReviewState;
 
@@ -90,7 +88,7 @@ impl ForgeMcpServer {
 
         let mut comments = Vec::new();
 
-        // Collect blob-anchored comments from object chains.
+        // Collect blob-anchored comments via v2 thread discovery.
         if let Ok(oid) = git2::Oid::from_str(&review.target.head)
             && let Ok(obj) = repo.find_object(oid, None)
         {
@@ -118,15 +116,23 @@ impl ForgeMcpServer {
                 if !seen.insert(blob_oid.clone()) {
                     continue;
                 }
-                if let Ok(cs) = list_comments(&repo, &object_comment_ref(blob_oid)) {
-                    comments.extend(cs);
+                if let Ok(thread_ids) = find_threads_by_object(&repo, blob_oid) {
+                    for tid in &thread_ids {
+                        if let Ok(cs) = list_thread_comments(&repo, tid) {
+                            comments.extend(cs);
+                        }
+                    }
                 }
             }
         }
 
-        // Collect review-level (unanchored) comments.
-        if let Ok(cs) = list_comments(&repo, &review_comment_ref(&review.oid)) {
-            comments.extend(cs);
+        // Also collect threads anchored to the review OID itself.
+        if let Ok(thread_ids) = find_threads_by_object(&repo, &review.oid) {
+            for tid in &thread_ids {
+                if let Ok(cs) = list_thread_comments(&repo, tid) {
+                    comments.extend(cs);
+                }
+            }
         }
 
         comments.sort_by_key(|c| c.timestamp);
