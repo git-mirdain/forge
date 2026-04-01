@@ -1,21 +1,23 @@
 //! Forge LSP server — surfaces inline comments as inlay hints.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use std::time::SystemTime;
 
 use git2::Repository;
 use serde_json::Value;
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::request::ShowDocument;
 use tower_lsp::lsp_types::{
-    CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability, CodeActionResponse,
-    Command, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, InitializeParams,
-    InitializeResult, InitializedParams, InlayHint, InlayHintLabel, InlayHintParams, MessageType,
-    OneOf, Position, SaveOptions, ServerCapabilities, ShowDocumentParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, Url, WorkDoneProgressOptions,
+    CodeAction, CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability,
+    CodeActionResponse, Command, CreateFile, CreateFileOptions, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentChangeOperation, DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams,
+    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintLabel,
+    InlayHintParams, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
+    ResourceOp, SaveOptions, ServerCapabilities, TextDocumentEdit, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+    WorkDoneProgressOptions, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -29,11 +31,13 @@ enum PendingComment {
     Reply { comment_oid: String },
 }
 
+const DRAFTS_DIR: &str = ".git/forge/comments/drafts";
+
 struct ForgeLanguageServer {
     client: Client,
-    repo_path: RwLock<Option<std::path::PathBuf>>,
+    repo_path: RwLock<Option<PathBuf>>,
     file_contents: RwLock<HashMap<Url, String>>,
-    pending: Mutex<HashMap<std::path::PathBuf, PendingComment>>,
+    pending: Mutex<HashMap<PathBuf, PendingComment>>,
 }
 
 impl ForgeLanguageServer {
@@ -50,6 +54,13 @@ impl ForgeLanguageServer {
         let path = self.repo_path.read().ok()?;
         let path = path.as_ref()?;
         Repository::discover(path).ok()
+    }
+
+    fn repo_root(&self) -> Option<PathBuf> {
+        let path = self.repo_path.read().ok()?;
+        let path = path.as_ref()?;
+        let repo = Repository::discover(path).ok()?;
+        repo.path().parent().map(Into::into)
     }
 
     fn hash_content(repo: &Repository, content: &[u8]) -> Option<String> {
@@ -96,6 +107,27 @@ impl ForgeLanguageServer {
         let _ = self.client.inlay_hint_refresh().await;
     }
 
+    fn draft_path(&self) -> Option<PathBuf> {
+        let root = self.repo_root()?;
+        let dir = root.join(DRAFTS_DIR);
+        let _ = std::fs::create_dir_all(&dir);
+        let ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        Some(dir.join(format!("forge-comment-{ts}.md")))
+    }
+
+    fn is_draft(path: &std::path::Path) -> bool {
+        path.components().any(|c| c.as_os_str() == "drafts")
+            && path.components().any(|c| c.as_os_str() == "forge")
+            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with("forge-comment-")
+                    && std::path::Path::new(n)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            })
+    }
+
     async fn handle_forge_save(&self, path: &std::path::Path, text: Option<String>) {
         let pending = {
             let Ok(mut map) = self.pending.lock() else {
@@ -140,6 +172,49 @@ impl ForgeLanguageServer {
 
         self.refresh().await;
     }
+
+    async fn open_draft(&self, path: &PathBuf, header: &str, pending: PendingComment) {
+        let Ok(uri) = Url::from_file_path(path) else {
+            return;
+        };
+
+        if let Ok(mut map) = self.pending.lock() {
+            map.insert(path.clone(), pending);
+        }
+
+        let edit = WorkspaceEdit {
+            changes: None,
+            document_changes: Some(DocumentChanges::Operations(vec![
+                DocumentChangeOperation::Op(ResourceOp::Create(CreateFile {
+                    uri: uri.clone(),
+                    options: Some(CreateFileOptions {
+                        overwrite: Some(true),
+                        ignore_if_exists: None,
+                    }),
+                    annotation_id: None,
+                })),
+                DocumentChangeOperation::Edit(TextDocumentEdit {
+                    text_document: OptionalVersionedTextDocumentIdentifier { uri, version: None },
+                    edits: vec![OneOf::Left(TextEdit {
+                        range: tower_lsp::lsp_types::Range {
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                        },
+                        new_text: header.to_string(),
+                    })],
+                }),
+            ])),
+            change_annotations: None,
+        };
+
+        let _ = self.client.apply_edit(edit).await;
+    }
 }
 
 fn hint_for_comment(comment: &Comment) -> InlayHint {
@@ -163,22 +238,6 @@ fn hint_for_comment(comment: &Comment) -> InlayHint {
         padding_right: None,
         data: Some(Value::String(comment.oid.clone())),
     }
-}
-
-fn forge_tmp_path() -> std::path::PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    std::env::temp_dir().join(format!("forge-comment-{ts}.md"))
-}
-
-fn is_forge_tmp(path: &std::path::Path) -> bool {
-    path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-        n.starts_with("forge-comment-")
-            && std::path::Path::new(n)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-    })
 }
 
 #[tower_lsp::async_trait]
@@ -245,7 +304,7 @@ impl LanguageServer for ForgeLanguageServer {
             .uri
             .to_file_path()
             .ok()
-            .filter(|p| is_forge_tmp(p))
+            .filter(|p| Self::is_draft(p))
         {
             self.handle_forge_save(&path, params.text).await;
             return;
@@ -289,24 +348,32 @@ impl LanguageServer for ForgeLanguageServer {
 
         let mut actions: CodeActionResponse = Vec::new();
 
-        actions.push(CodeActionOrCommand::Command(Command {
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
             title: "New forge comment".to_string(),
-            command: "forge.comment.new".to_string(),
-            arguments: Some(vec![
-                Value::String(uri.to_string()),
-                Value::from(line),
-                Value::String(blob_oid.clone()),
-            ]),
+            command: Some(Command {
+                title: "New forge comment".to_string(),
+                command: "forge.comment.new".to_string(),
+                arguments: Some(vec![
+                    Value::String(uri.to_string()),
+                    Value::from(line),
+                    Value::String(blob_oid.clone()),
+                ]),
+            }),
+            ..Default::default()
         }));
 
         for hint in Self::hints_for_blob(&repo, &blob_oid) {
             if hint.position.line == line
                 && let Some(Value::String(comment_oid)) = hint.data
             {
-                actions.push(CodeActionOrCommand::Command(Command {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                     title: "Reply to forge comment".to_string(),
-                    command: "forge.comment.reply".to_string(),
-                    arguments: Some(vec![Value::String(comment_oid)]),
+                    command: Some(Command {
+                        title: "Reply to forge comment".to_string(),
+                        command: "forge.comment.reply".to_string(),
+                        arguments: Some(vec![Value::String(comment_oid)]),
+                    }),
+                    ..Default::default()
                 }));
             }
         }
@@ -335,67 +402,44 @@ impl LanguageServer for ForgeLanguageServer {
                     .to_file_path()
                     .map_or_else(|()| uri_str.clone(), |p| p.display().to_string());
 
-                let tmp = forge_tmp_path();
+                let Some(tmp) = self.draft_path() else {
+                    return Ok(None);
+                };
                 let header = format!(
                     "<!-- forge: new comment on {}:{} -->\n\n",
                     path_str,
                     line + 1
                 );
-                if std::fs::write(&tmp, &header).is_err() {
-                    return Ok(None);
-                }
-                if let Ok(mut map) = self.pending.lock() {
-                    map.insert(
-                        tmp.clone(),
-                        PendingComment::New {
-                            blob_oid: blob_oid.clone(),
-                            line: u32::try_from(line).unwrap_or(0),
-                        },
-                    );
-                }
-                let Ok(tmp_uri) = Url::from_file_path(&tmp) else {
-                    return Ok(None);
-                };
-                let _ = self
-                    .client
-                    .send_request::<ShowDocument>(ShowDocumentParams {
-                        uri: tmp_uri,
-                        external: None,
-                        take_focus: Some(true),
-                        selection: None,
-                    })
-                    .await;
+
+                let line = u32::try_from(line).unwrap_or(0);
+                self.open_draft(
+                    &tmp,
+                    &header,
+                    PendingComment::New {
+                        blob_oid: blob_oid.clone(),
+                        line,
+                    },
+                )
+                .await;
             }
             "forge.comment.reply" => {
                 let Some(Value::String(comment_oid)) = args.first() else {
                     return Ok(None);
                 };
 
-                let tmp = forge_tmp_path();
-                let header = format!("<!-- forge: reply to {comment_oid} -->\n\n");
-                if std::fs::write(&tmp, &header).is_err() {
-                    return Ok(None);
-                }
-                if let Ok(mut map) = self.pending.lock() {
-                    map.insert(
-                        tmp.clone(),
-                        PendingComment::Reply {
-                            comment_oid: comment_oid.clone(),
-                        },
-                    );
-                }
-                let Ok(tmp_uri) = Url::from_file_path(&tmp) else {
+                let Some(tmp) = self.draft_path() else {
                     return Ok(None);
                 };
-                let _ = self
-                    .client
-                    .send_request::<ShowDocument>(ShowDocumentParams {
-                        uri: tmp_uri,
-                        external: None,
-                        take_focus: Some(true),
-                        selection: None,
-                    })
-                    .await;
+                let header = format!("<!-- forge: reply to {comment_oid} -->\n\n");
+
+                self.open_draft(
+                    &tmp,
+                    &header,
+                    PendingComment::Reply {
+                        comment_oid: comment_oid.clone(),
+                    },
+                )
+                .await;
             }
             _ => {}
         }
