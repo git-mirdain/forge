@@ -7,6 +7,7 @@ use anyhow::Result;
 use clap::Parser;
 use forge_github::GitHubAdapter;
 use forge_github::config::discover_github_configs;
+use git_forge::comment::rebuild_comments_index;
 use git_forge::sync::RemoteSync;
 use git2::Repository;
 
@@ -48,6 +49,10 @@ async fn run(repo: &Repository, adapters: &[GitHubAdapter], args: &Args) -> Resu
     loop {
         for adapter in adapters {
             sync_one(repo, adapter).await?;
+        }
+
+        if let Err(e) = rebuild_comments_index(repo) {
+            eprintln!("forge-server: index rebuild failed: {e}");
         }
 
         if args.once {

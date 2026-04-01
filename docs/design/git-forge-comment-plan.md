@@ -2,6 +2,7 @@
 
 > **Status: COMPLETED** — All steps have been implemented.
 > This document is historical.
+> See [`comment-system-plan.md`](../dev/comment-system-plan.md) for the v2 redesign plan.
 
 Each step is self-contained and ordered so that later steps build on earlier ones.
 Feed them sequentially to an agent.

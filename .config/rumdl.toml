@@ -11,6 +11,9 @@ exclude = [
 
 respect-gitignore = true
 
+[MD041]
+enabled = false
+
 [MD013]
 reflow = true
 reflow-mode = "sentence-per-line"

@@ -203,10 +203,9 @@ function M.add_comment(visual)
   local range = start_line .. "-" .. end_line
   local title = string.format(" Comment on %s:%s ", path, range)
   local argv = {
-    "forge", "comment", "add",
-    "--anchor", oid,
-    "--anchor-path", path,
-    "--range", range,
+    "forge", "comment", "create",
+    "--on", oid,
+    "--lines", range,
   }
 
   local buf, win = open_float(title)
@@ -214,20 +213,25 @@ function M.add_comment(visual)
 end
 
 function M.reply()
-  vim.ui.input({ prompt = "Reply to comment OID: " }, function(oid)
-    if not oid or oid == "" then return end
-    local title = string.format(" Reply to %s ", oid)
-    local argv = { "forge", "comment", "reply", "--to", oid }
-    local buf, win = open_float(title)
-    bind_float(buf, win, argv)
+  vim.ui.input({ prompt = "Thread ID: " }, function(thread_id)
+    if not thread_id or thread_id == "" then return end
+    vim.ui.input({ prompt = "Reply to comment OID: " }, function(comment_oid)
+      if not comment_oid or comment_oid == "" then return end
+      local title = string.format(" Reply in thread %s ", thread_id)
+      local argv = { "forge", "comment", "reply", thread_id, "--to", comment_oid }
+      local buf, win = open_float(title)
+      bind_float(buf, win, argv)
+    end)
   end)
 end
 
 function M.resolve()
-  vim.ui.input({ prompt = "Resolve thread OID: " }, function(oid)
-    if not oid or oid == "" then return end
+  vim.ui.input({ prompt = "Thread ID: " }, function(thread_id)
+    if not thread_id or thread_id == "" then return end
+    vim.ui.input({ prompt = "Comment OID: " }, function(comment_oid)
+      if not comment_oid or comment_oid == "" then return end
     local stderr_lines = {}
-    vim.fn.jobstart({ "forge", "comment", "resolve", "--thread", oid }, {
+    vim.fn.jobstart({ "forge", "comment", "resolve", thread_id, "--comment", comment_oid }, {
       stderr_buffered = true,
       on_stderr = function(_, data)
         for _, line in ipairs(data) do
@@ -248,11 +252,18 @@ function M.resolve()
         end)
       end,
     })
+    end)
   end)
 end
 
 function M.list_comments()
-  vim.fn.jobstart({ "forge", "--json", "comment", "list" }, {
+  local path = relative_path()
+  local oid = path and blob_oid(path) or nil
+  if not oid then
+    vim.notify("forge: file not tracked by git", vim.log.levels.ERROR)
+    return
+  end
+  vim.fn.jobstart({ "forge", "--json", "comment", "list", "--on", oid }, {
     stdout_buffered = true,
     on_stdout = function(_, data)
       vim.schedule(function()

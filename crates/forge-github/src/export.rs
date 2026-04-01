@@ -4,14 +4,34 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use git_forge::Store;
-use git_forge::comment::{issue_comment_ref, list_comments, review_comment_ref};
-use git_forge::refs::{ISSUE_INDEX, REVIEW_INDEX};
+use git_forge::comment::{find_threads_by_object, list_thread_comments};
+use git_forge::refs::{ISSUE_INDEX, REVIEW_INDEX, walk_tree};
 use git_forge::sync::SyncReport;
 use git2::Repository;
 
 use crate::client::GitHubClient;
 use crate::config::GitHubSyncConfig;
 use crate::state::{load_sync_state, lookup_by_forge_oid, save_sync_state};
+
+/// Try to find the path of a blob in a commit's tree.
+///
+/// `commit_oid` is the commit (or tree) to walk, `blob_oid` is the blob to find.
+/// Returns `None` if the object can't be resolved or the blob isn't found.
+fn resolve_blob_path(repo: &Repository, commit_oid: &str, blob_oid: &str) -> Option<String> {
+    let oid = git2::Oid::from_str(commit_oid).ok()?;
+    let obj = repo.find_object(oid, None).ok()?;
+    let tree = match obj.kind() {
+        Some(git2::ObjectType::Commit) => repo.find_commit(oid).ok()?.tree().ok()?,
+        Some(git2::ObjectType::Tree) => repo.find_tree(oid).ok()?,
+        _ => return None,
+    };
+    let mut files = Vec::new();
+    walk_tree(repo, &tree, "", &mut files);
+    files
+        .into_iter()
+        .find(|(_, oid)| oid == blob_oid)
+        .map(|(path, _)| path)
+}
 
 /// Returns `true` if the string looks like a branch name rather than a raw OID.
 fn is_branch_name(s: &str) -> bool {
@@ -123,31 +143,32 @@ async fn export_issue_comments_with_state(
         return Ok(SyncReport::default());
     };
 
-    let ref_name = issue_comment_ref(forge_issue_oid);
-    let comments = list_comments(repo, &ref_name)?;
-
+    let thread_ids = find_threads_by_object(repo, forge_issue_oid)?;
     let mut report = SyncReport::default();
 
-    for comment in &comments {
-        if lookup_by_forge_oid(state, "comments", &comment.oid).is_some() {
-            report.skipped += 1;
-            continue;
-        }
-
-        match client
-            .create_issue_comment(&cfg.owner, &cfg.repo, github_number, &comment.body)
-            .await
-        {
-            Ok(github_comment_id) => {
-                state.insert(format!("comments/{github_comment_id}"), comment.oid.clone());
-                report.exported += 1;
+    for thread_id in &thread_ids {
+        let comments = list_thread_comments(repo, thread_id)?;
+        for comment in &comments {
+            if lookup_by_forge_oid(state, "comments", &comment.oid).is_some() {
+                report.skipped += 1;
+                continue;
             }
-            Err(e) => {
-                eprintln!(
-                    "forge: failed to export comment {} on issue {forge_issue_oid}: {e}",
-                    comment.oid
-                );
-                report.failed += 1;
+
+            match client
+                .create_issue_comment(&cfg.owner, &cfg.repo, github_number, &comment.body)
+                .await
+            {
+                Ok(github_comment_id) => {
+                    state.insert(format!("comments/{github_comment_id}"), comment.oid.clone());
+                    report.exported += 1;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "forge: failed to export comment {} on issue {forge_issue_oid}: {e}",
+                        comment.oid
+                    );
+                    report.failed += 1;
+                }
             }
         }
     }
@@ -277,77 +298,86 @@ async fn export_review_comments_with_state(
         return Ok(SyncReport::default());
     };
 
-    let ref_name = review_comment_ref(forge_review_oid);
-    let comments = list_comments(repo, &ref_name)?;
+    // Load the review to get the head commit for blob-path resolution.
+    let store = Store::new(repo);
+    let review_head: Option<String> = store
+        .get_review(forge_review_oid)
+        .ok()
+        .map(|r| r.target.head.clone());
 
+    let thread_ids = find_threads_by_object(repo, forge_review_oid)?;
     let mut report = SyncReport::default();
 
-    for comment in &comments {
-        if lookup_by_forge_oid(state, "comments", &comment.oid).is_some() {
-            report.skipped += 1;
-            continue;
-        }
+    for thread_id in &thread_ids {
+        let comments = list_thread_comments(repo, thread_id)?;
+        for comment in &comments {
+            if lookup_by_forge_oid(state, "comments", &comment.oid).is_some() {
+                report.skipped += 1;
+                continue;
+            }
 
-        // For review comments with anchor data, use create_review_comment.
-        // For plain comments (no anchor), fall back to issue comment API on the PR.
-        if let Some(ref anchor) = comment.anchor {
-            let (commit_id, path, line) = match anchor {
-                git_forge::comment::Anchor::Object { oid, path, range } => {
-                    let line = range
-                        .as_ref()
-                        .and_then(|r| r.split('-').next()?.parse::<u32>().ok())
-                        .unwrap_or(1);
-                    (oid.as_str(), path.as_deref().unwrap_or(""), line)
-                }
-                git_forge::comment::Anchor::CommitRange { start, .. } => (start.as_str(), "", 1),
-            };
+            // For review comments with anchor data, use create_review_comment.
+            // For plain comments (no anchor), fall back to issue comment API on the PR.
+            if let Some(ref anchor) = comment.anchor {
+                let line = anchor.start_line.unwrap_or(1);
 
-            // Only create review comment if we have a real path; otherwise fall back.
-            if !path.is_empty() {
-                match client
-                    .create_review_comment(
-                        &cfg.owner,
-                        &cfg.repo,
-                        github_number,
-                        &comment.body,
-                        commit_id,
-                        path,
-                        line,
-                    )
-                    .await
-                {
-                    Ok(github_comment_id) => {
-                        state.insert(format!("comments/{github_comment_id}"), comment.oid.clone());
-                        report.exported += 1;
-                        continue;
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "forge: failed to export review comment {} on review {forge_review_oid}: {e}",
-                            comment.oid
-                        );
-                        report.failed += 1;
-                        continue;
+                // Resolve blob OID to a file path by walking the review's head commit tree.
+                // Use anchor.oid as the blob OID; commit is the review's target head.
+                let path = review_head
+                    .as_deref()
+                    .and_then(|head| resolve_blob_path(repo, head, &anchor.oid));
+
+                if let Some(ref path) = path {
+                    // Use the review's head commit as the commit_id for the GitHub API.
+                    let commit_id = review_head.as_deref().unwrap_or(&anchor.oid);
+                    match client
+                        .create_review_comment(
+                            &cfg.owner,
+                            &cfg.repo,
+                            github_number,
+                            &comment.body,
+                            commit_id,
+                            path,
+                            line,
+                        )
+                        .await
+                    {
+                        Ok(github_comment_id) => {
+                            state.insert(
+                                format!("comments/{github_comment_id}"),
+                                comment.oid.clone(),
+                            );
+                            report.exported += 1;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "forge: failed to export review comment {} on review {forge_review_oid}: {e}",
+                                comment.oid
+                            );
+                            report.failed += 1;
+                            continue;
+                        }
                     }
                 }
             }
-        }
 
-        // Fall back to issue comment API for plain comments on PRs.
-        match client
-            .create_issue_comment(&cfg.owner, &cfg.repo, github_number, &comment.body)
-            .await
-        {
-            Ok(github_comment_id) => {
-                state.insert(format!("comments/{github_comment_id}"), comment.oid.clone());
-                report.exported += 1;
-            }
-            Err(e) => {
-                eprintln!(
-                    "forge: failed to export comment {} on review {forge_review_oid}: {e}",
-                    comment.oid
-                );
-                report.failed += 1;
+            // Fall back to issue comment API for plain comments on PRs.
+            match client
+                .create_issue_comment(&cfg.owner, &cfg.repo, github_number, &comment.body)
+                .await
+            {
+                Ok(github_comment_id) => {
+                    state.insert(format!("comments/{github_comment_id}"), comment.oid.clone());
+                    report.exported += 1;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "forge: failed to export comment {} on review {forge_review_oid}: {e}",
+                        comment.oid
+                    );
+                    report.failed += 1;
+                }
             }
         }
     }

@@ -3,9 +3,8 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use git_chain::Chain;
 use git_forge::Store;
-use git_forge::comment::{issue_comment_ref, review_comment_ref};
+use git_forge::comment::{Anchor, create_thread};
 use git_forge::review::ReviewTarget;
 use git_forge::sync::SyncReport;
 use git2::Repository;
@@ -122,7 +121,6 @@ async fn import_issue_comments_with_state(
     let comments = client
         .fetch_issue_comments(&cfg.owner, &cfg.repo, github_number)
         .await?;
-    let ref_name = issue_comment_ref(&forge_issue_oid);
     let mut report = SyncReport::default();
 
     for comment in &comments {
@@ -133,16 +131,14 @@ async fn import_issue_comments_with_state(
         }
 
         let body = comment.body.as_deref().unwrap_or("");
-        let message = if body.is_empty() {
-            format!("Github-Id: {}", comment.id)
-        } else {
-            format!("{body}\n\nGithub-Id: {}", comment.id)
+        let anchor = Anchor {
+            oid: forge_issue_oid.clone(),
+            start_line: None,
+            end_line: None,
         };
-
-        let tree = repo.build_tree(&[])?;
-        match repo.append(&ref_name, &message, tree, None) {
-            Ok(entry) => {
-                state.insert(state_key, entry.commit.to_string());
+        match create_thread(repo, body, Some(&anchor), None) {
+            Ok((_thread_id, created)) => {
+                state.insert(state_key, created.oid.clone());
                 report.imported += 1;
             }
             Err(e) => {
@@ -275,7 +271,6 @@ async fn import_review_comments_with_state(
     let comments = client
         .fetch_review_comments(&cfg.owner, &cfg.repo, github_number)
         .await?;
-    let ref_name = review_comment_ref(&forge_review_oid);
     let mut report = SyncReport::default();
 
     for comment in &comments {
@@ -286,29 +281,14 @@ async fn import_review_comments_with_state(
         }
 
         let body = comment.body.as_deref().unwrap_or("");
-
-        // Build trailer block with anchor info and Github-Id.
-        let mut trailer_lines = Vec::new();
-        if let Some(ref path) = comment.path {
-            trailer_lines.push(format!("Anchor: {}", comment.commit_id));
-            trailer_lines.push(format!("Anchor-Path: {path}"));
-            if let Some(l) = comment.line {
-                trailer_lines.push(format!("Anchor-Range: {l}-{l}"));
-            }
-        }
-        trailer_lines.push(format!("Github-Id: {}", comment.id));
-        let trailers = trailer_lines.join("\n");
-
-        let message = if body.is_empty() {
-            trailers
-        } else {
-            format!("{body}\n\n{trailers}")
+        let anchor = Anchor {
+            oid: forge_review_oid.clone(),
+            start_line: comment.line,
+            end_line: comment.line,
         };
-
-        let tree = repo.build_tree(&[])?;
-        match repo.append(&ref_name, &message, tree, None) {
-            Ok(entry) => {
-                state.insert(state_key, entry.commit.to_string());
+        match create_thread(repo, body, Some(&anchor), None) {
+            Ok((_thread_id, created)) => {
+                state.insert(state_key, created.oid.clone());
                 report.imported += 1;
             }
             Err(e) => {

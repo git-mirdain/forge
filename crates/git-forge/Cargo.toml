@@ -25,6 +25,7 @@ git-ledger = { workspace = true }
 git-chain = { workspace = true }
 facet = { workspace = true }
 facet-json = { workspace = true, optional = true }
+uuid = { workspace = true }
 clap = { workspace = true, optional = true }
 inquire = { workspace = true, optional = true }
 comfy-table = { workspace = true, optional = true }

@@ -44,3 +44,4 @@ facet-json = "0.44"
 inquire = { version = "0.7", features = ["editor"] }
 comfy-table = "7"
 tower-lsp = "0.20"
+uuid = { version = "1", features = ["v7"] }
