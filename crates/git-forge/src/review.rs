@@ -206,7 +206,7 @@ fn read_objects_subtree(repo: &Repository, ref_name: &str) -> Vec<String> {
     let Ok(tree) = commit.tree() else {
         return Vec::new();
     };
-    let Ok(entry) = tree.get_name("objects").ok_or(()) else {
+    let Some(entry) = tree.get_name("objects") else {
         return Vec::new();
     };
     if entry.kind() != Some(ObjectType::Tree) {
@@ -662,7 +662,9 @@ impl Store<'_> {
         let entry = self.repo.read(&ref_name)?;
         let review = review_from_entry(self.repo, &entry, &ref_name, None)?;
         if !review.objects.contains(&obj_oid.to_string()) {
-            return Err(Error::NotFound(obj_oid.to_string()));
+            return Err(Error::Config(format!(
+                "object {obj_oid} is not in this review's objects"
+            )));
         }
 
         let field = format!("approvals/{obj_oid}/{contributor_uuid}");

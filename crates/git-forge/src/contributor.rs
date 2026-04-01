@@ -146,7 +146,7 @@ fn read_contributor(repo: &Repository, id: &ContributorId) -> Result<Option<Cont
 
 /// Collect the entry names under `subtree_name` in `tree`.
 fn read_subtree_keys(repo: &Repository, tree: &git2::Tree<'_>, subtree_name: &str) -> Vec<String> {
-    let Ok(entry) = tree.get_name(subtree_name).ok_or(()) else {
+    let Some(entry) = tree.get_name(subtree_name) else {
         return Vec::new();
     };
     if entry.kind() != Some(ObjectType::Tree) {
@@ -161,9 +161,7 @@ fn read_subtree_keys(repo: &Repository, tree: &git2::Tree<'_>, subtree_name: &st
         .collect()
 }
 
-/// Write a contributor tree to the repo and update its ref.
-///
-/// `parent` is the previous commit on this ref (if any).
+/// Write a new contributor tree to the repo as the initial commit on its ref.
 fn write_contributor(
     repo: &Repository,
     id: &ContributorId,
@@ -171,15 +169,12 @@ fn write_contributor(
     keys: &[(&str, &[u8])],
     roles: &[&str],
     message: &str,
-    parent: Option<&git2::Commit<'_>>,
 ) -> Result<()> {
     let mut builder = repo.treebuilder(None)?;
 
-    // handle blob
     let handle_oid = repo.blob(handle.as_str().as_bytes())?;
     builder.insert("handle", handle_oid, 0o100_644)?;
 
-    // keys/ subtree
     if !keys.is_empty() {
         let mut kb = repo.treebuilder(None)?;
         for (fp, material) in keys {
@@ -190,7 +185,6 @@ fn write_contributor(
         builder.insert("keys", keys_oid, 0o040_000)?;
     }
 
-    // roles/ subtree
     if !roles.is_empty() {
         let empty = repo.blob(b"")?;
         let mut rb = repo.treebuilder(None)?;
@@ -204,10 +198,8 @@ fn write_contributor(
     let tree_oid = builder.write()?;
     let tree = repo.find_tree(tree_oid)?;
     let sig = repo.signature()?;
-    let parents: Vec<&git2::Commit<'_>> = parent.into_iter().collect();
-
     let ref_name = contributor_ref(id);
-    repo.commit(Some(&ref_name), &sig, &sig, message, &tree, &parents)?;
+    repo.commit(Some(&ref_name), &sig, &sig, message, &tree, &[])?;
     Ok(())
 }
 
@@ -227,15 +219,7 @@ impl Store<'_> {
             return Err(Error::Config(format!("handle already taken: {handle}")));
         }
         let id = ContributorId::new();
-        write_contributor(
-            self.repo,
-            &id,
-            &handle,
-            &[],
-            roles,
-            "create contributor",
-            None::<&git2::Commit<'_>>,
-        )?;
+        write_contributor(self.repo, &id, &handle, &[], roles, "create contributor")?;
         Ok(Contributor {
             id,
             handle,
