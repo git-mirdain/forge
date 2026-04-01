@@ -1301,12 +1301,21 @@ impl Executor {
                     print_review(&review, cli.json);
                 }
 
-                ReviewCommand::Approve {
-                    reference,
-                    message: _,
-                } => {
+                ReviewCommand::Merge { reference } => {
+                    let review =
+                        self.update_review(reference, None, None, Some(&ReviewState::Merged))?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::Approve { reference, path } => {
                     let uuid = current_contributor_uuid(&self.repo, &self.store())?;
-                    let review = self.approve_review(reference, &uuid)?;
+                    let review = if let Some(p) = path {
+                        let blob_oid = self.resolve_path(p, cli.allow_dirty)?;
+                        self.store()
+                            .approve_review_object(reference, &blob_oid, &uuid)?
+                    } else {
+                        self.approve_review(reference, &uuid)?
+                    };
                     print_review(&review, cli.json);
                 }
 
@@ -1986,17 +1995,7 @@ fn review_coverage(
     walk_tree(repo, &tree, "", &mut all_blobs);
 
     // Collect blob OIDs covered by any approved review.
-    let reviews = executor.list_reviews(None)?;
-    let mut approved_oids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for review in &reviews {
-        if review.approvals.is_empty() {
-            continue;
-        }
-        let files = review_target_files(repo, review)?;
-        for (_, oid) in files {
-            approved_oids.insert(oid);
-        }
-    }
+    let approved_oids = executor.store().approved_oids()?;
 
     let mut covered = Vec::new();
     let mut uncovered = Vec::new();

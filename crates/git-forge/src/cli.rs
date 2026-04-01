@@ -315,19 +315,25 @@ pub enum ReviewCommand {
         interactive: bool,
     },
 
-    /// Close a review.
+    /// Close a review without merging.
     Close {
         /// Display ID or OID prefix.
         reference: String,
     },
 
-    /// Approve a review.
+    /// Mark a review as merged.
+    Merge {
+        /// Display ID or OID prefix.
+        reference: String,
+    },
+
+    /// Approve a review (all objects, or a specific path resolved against HEAD).
     Approve {
         /// Display ID or OID prefix.
         reference: String,
 
-        /// Optional approval message.
-        message: Option<String>,
+        /// File path to approve (resolves to OID via HEAD tree). Omit to approve all.
+        path: Option<std::path::PathBuf>,
     },
 
     /// Revoke your approval on a review.

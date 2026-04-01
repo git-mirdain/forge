@@ -24,6 +24,8 @@ pub const ISSUE_INDEX: &str = "refs/forge/meta/index/issues";
 pub const REVIEW_INDEX: &str = "refs/forge/meta/index/reviews";
 /// Configuration ref for provider settings.
 pub const CONFIG: &str = "refs/forge/config";
+/// Derived index: `<oid>/<review-uuid>` — approved object OIDs → review refs.
+pub const APPROVALS_INDEX: &str = "refs/forge/index/approvals-by-oid";
 
 /// Read a UTF-8 blob at `path` from the tree pointed to by `config_ref`.
 ///

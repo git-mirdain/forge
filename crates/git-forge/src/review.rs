@@ -701,4 +701,26 @@ impl Store<'_> {
         let display_id = display_id_for_oid(index.as_ref(), &oid);
         review_from_entry(self.repo, &entry, &ref_name, display_id)
     }
+
+    /// Return the set of object OIDs that have at least one approval in any
+    /// review.
+    ///
+    /// Scans review refs directly. The `refs/forge/index/approvals-by-oid`
+    /// derived index (Phase 5 optimization) is not yet written; this method
+    /// is the authoritative fallback.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn approved_oids(&self) -> Result<std::collections::HashSet<String>> {
+        let reviews = self.list_reviews()?;
+        let mut set = std::collections::HashSet::new();
+        for review in reviews {
+            for entry in review.approvals {
+                if !entry.approvers.is_empty() {
+                    set.insert(entry.oid);
+                }
+            }
+        }
+        Ok(set)
+    }
 }

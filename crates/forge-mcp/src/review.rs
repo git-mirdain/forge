@@ -8,7 +8,7 @@ use serde::Deserialize;
 use git_forge::Store;
 use git_forge::comment::{find_threads_by_object, list_thread_comments};
 use git_forge::refs::walk_tree;
-use git_forge::review::ReviewState;
+use git_forge::review::{ReviewState, ReviewTarget};
 
 use crate::server::ForgeMcpServer;
 
@@ -31,6 +31,30 @@ struct GetReviewParams {
 struct ListReviewCommentsParams {
     /// Review display ID or OID prefix.
     reference: String,
+}
+
+/// Parameters for the `create_review` tool.
+#[derive(Deserialize, JsonSchema)]
+struct CreateReviewParams {
+    /// Review title.
+    title: String,
+    /// Head object OID (commit, tree, or blob).
+    head: String,
+    /// Base object OID (optional; makes this a commit-range review).
+    base: Option<String>,
+    /// Body in Markdown.
+    body: Option<String>,
+    /// Source ref name to track (e.g. `"feature-branch"`).
+    source_ref: Option<String>,
+}
+
+/// Parameters for the `approve_review` tool.
+#[derive(Deserialize, JsonSchema)]
+struct ApproveReviewParams {
+    /// Review display ID or OID prefix.
+    reference: String,
+    /// Contributor UUID to record as the approver.
+    contributor_uuid: String,
 }
 
 #[tool_router(router = review_router, vis = "pub(crate)")]
@@ -137,5 +161,44 @@ impl ForgeMcpServer {
 
         comments.sort_by_key(|c| c.timestamp);
         facet_json::to_string_pretty(&comments).expect("serialize")
+    }
+
+    /// Create a new review.
+    #[tool(
+        description = "Create a new forge review targeting a git object (commit, blob, or tree)."
+    )]
+    fn create_review(&self, Parameters(params): Parameters<CreateReviewParams>) -> String {
+        let repo = match self.open_repo() {
+            Ok(r) => r,
+            Err(e) => return format!("error: {e}"),
+        };
+        let store = Store::new(&repo);
+        let target = ReviewTarget {
+            head: params.head,
+            base: params.base,
+        };
+        match store.create_review(
+            &params.title,
+            params.body.as_deref().unwrap_or(""),
+            &target,
+            params.source_ref.as_deref(),
+        ) {
+            Ok(review) => facet_json::to_string_pretty(&review).expect("serialize"),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    /// Approve all objects in a review for a contributor.
+    #[tool(description = "Record approval of all objects in a review for a contributor UUID.")]
+    fn approve_review(&self, Parameters(params): Parameters<ApproveReviewParams>) -> String {
+        let repo = match self.open_repo() {
+            Ok(r) => r,
+            Err(e) => return format!("error: {e}"),
+        };
+        let store = Store::new(&repo);
+        match store.approve_review(&params.reference, &params.contributor_uuid) {
+            Ok(review) => facet_json::to_string_pretty(&review).expect("serialize"),
+            Err(e) => format!("error: {e}"),
+        }
     }
 }
