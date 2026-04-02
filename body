@@ -1,0 +1,1 @@
+In `crates/git-forge/src/error.rs` L31–32, `InvalidObjectType` reads "expected commit, blob, or tag" but forge comments are anchored to commits, blobs, and trees — not tags. The message should say "expected commit, blob, or tree".\n\nGenerated-by: Claude Code (Claude Sonnet 4.6)
