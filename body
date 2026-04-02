@@ -1,0 +1,1 @@
+In `crates/forge-mcp/src/issue.rs` L71–77 and `crates/forge-mcp/src/prompt.rs` L46–52, the `IssueState` parse-then-map-err pattern is nearly identical (the prompt variant additionally filters empty strings). Extract a shared helper to remove the duplication.\n\nGenerated-by: Claude Code (Claude Sonnet 4.6)
