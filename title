@@ -1,0 +1,1 @@
+parse_display_id returns u64::MAX for malformed numeric suffixes
