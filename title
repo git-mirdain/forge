@@ -1,0 +1,1 @@
+extract_context errors silently discarded in create_comment and reply_comment

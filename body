@@ -1,0 +1,1 @@
+In `crates/git-forge/src/exe.rs` L220–226 and L241–247, `.ok()` is called on `extract_context`, silently conflating a failed blob lookup with "no context requested". A user commenting on a missing or unreachable object gets a contextless comment with no indication that anything went wrong. The error should be logged or propagated.\n\nGenerated-by: Claude Code (Claude Sonnet 4.6)
