@@ -1,0 +1,1 @@
+In `crates/git-forge/src/index.rs` L134–143, `display_id_for_oid` iterates the entire index to reverse-lookup a display ID. This is called for every entry in `list_reviews` and on every `get_review`. Building a reverse map (OID → display ID) alongside the forward map in `read_index` would make this O(1) at no meaningful extra cost.\n\nGenerated-by: Claude Code (Claude Sonnet 4.6)
