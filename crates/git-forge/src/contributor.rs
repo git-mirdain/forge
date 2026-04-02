@@ -25,6 +25,32 @@ use uuid::Uuid;
 use crate::refs::{CONTRIBUTORS_PREFIX, build_tree};
 use crate::{Error, Result, Store};
 
+// ── subtree removal helper ──────────────────────────────────────────────────
+
+/// Remove a single entry from a subtree within `root_tree`, returning the new
+/// root tree OID.
+fn drop_from_subtree(
+    repo: &Repository,
+    root_tree: &git2::Tree<'_>,
+    subtree_name: &str,
+    key: &str,
+) -> Result<git2::Oid> {
+    let entry = root_tree
+        .get_name(subtree_name)
+        .filter(|e| e.kind() == Some(ObjectType::Tree))
+        .ok_or_else(|| Error::NotFound(format!("{subtree_name}/{key}")))?;
+    let subtree = repo.find_tree(entry.id())?;
+    if subtree.get_name(key).is_none() {
+        return Err(Error::NotFound(format!("{subtree_name}/{key}")));
+    }
+    let mut sub_builder = repo.treebuilder(Some(&subtree))?;
+    sub_builder.remove(key)?;
+    let new_sub_oid = sub_builder.write()?;
+    let mut root_builder = repo.treebuilder(Some(root_tree))?;
+    root_builder.insert(subtree_name, new_sub_oid, 0o040_000)?;
+    Ok(root_builder.write()?)
+}
+
 // ── newtype wrappers ─────────────────────────────────────────────────────────
 
 /// Opaque UUID v7 identifier for a contributor.
@@ -470,6 +496,306 @@ impl Store<'_> {
             emails: contributor.emails,
             keys: contributor.keys,
             roles,
+        })
+    }
+
+    /// Remove a role from a contributor.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the contributor or role doesn't exist.
+    pub fn remove_contributor_role(&self, handle: &str, role: &str) -> Result<Contributor> {
+        let h = Handle::new(handle)?;
+        let contributor = self
+            .find_contributor_by_handle(&h)?
+            .ok_or_else(|| Error::NotFound(handle.to_string()))?;
+
+        let ref_name = contributor_ref(&contributor.id);
+        let reference = self.repo.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+        let old_tree = parent_commit.tree()?;
+
+        let new_tree_oid = drop_from_subtree(self.repo, &old_tree, "roles", role)?;
+        let new_tree = self.repo.find_tree(new_tree_oid)?;
+
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            "remove contributor role",
+            &new_tree,
+            &[&parent_commit],
+        )?;
+
+        let mut roles = contributor.roles;
+        roles.retain(|r| r != role);
+        Ok(Contributor {
+            id: contributor.id,
+            handle: h,
+            names: contributor.names,
+            emails: contributor.emails,
+            keys: contributor.keys,
+            roles,
+        })
+    }
+
+    /// Add a display name to a contributor.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the contributor doesn't exist.
+    pub fn add_contributor_name(&self, handle: &str, name: &str) -> Result<Contributor> {
+        let h = Handle::new(handle)?;
+        let contributor = self
+            .find_contributor_by_handle(&h)?
+            .ok_or_else(|| Error::NotFound(handle.to_string()))?;
+
+        let ref_name = contributor_ref(&contributor.id);
+        let reference = self.repo.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+        let old_tree = parent_commit.tree()?;
+
+        let empty_oid = self.repo.blob(b"")?;
+        let path = format!("names/{name}");
+        let parts: Vec<&str> = path.split('/').collect();
+        let new_tree_oid = build_tree(self.repo, Some(&old_tree), &parts, empty_oid)?;
+        let new_tree = self.repo.find_tree(new_tree_oid)?;
+
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            "add contributor name",
+            &new_tree,
+            &[&parent_commit],
+        )?;
+
+        let mut names = contributor.names;
+        if !names.contains(&name.to_string()) {
+            names.push(name.to_string());
+        }
+        Ok(Contributor {
+            id: contributor.id,
+            handle: h,
+            names,
+            emails: contributor.emails,
+            keys: contributor.keys,
+            roles: contributor.roles,
+        })
+    }
+
+    /// Remove a display name from a contributor.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the contributor or name doesn't exist.
+    pub fn remove_contributor_name(&self, handle: &str, name: &str) -> Result<Contributor> {
+        let h = Handle::new(handle)?;
+        let contributor = self
+            .find_contributor_by_handle(&h)?
+            .ok_or_else(|| Error::NotFound(handle.to_string()))?;
+
+        let ref_name = contributor_ref(&contributor.id);
+        let reference = self.repo.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+        let old_tree = parent_commit.tree()?;
+
+        let new_tree_oid = drop_from_subtree(self.repo, &old_tree, "names", name)?;
+        let new_tree = self.repo.find_tree(new_tree_oid)?;
+
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            "remove contributor name",
+            &new_tree,
+            &[&parent_commit],
+        )?;
+
+        let mut names = contributor.names;
+        names.retain(|n| n != name);
+        Ok(Contributor {
+            id: contributor.id,
+            handle: h,
+            names,
+            emails: contributor.emails,
+            keys: contributor.keys,
+            roles: contributor.roles,
+        })
+    }
+
+    /// Add an email address to a contributor.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the contributor doesn't exist.
+    pub fn add_contributor_email(&self, handle: &str, email: &str) -> Result<Contributor> {
+        let h = Handle::new(handle)?;
+        let contributor = self
+            .find_contributor_by_handle(&h)?
+            .ok_or_else(|| Error::NotFound(handle.to_string()))?;
+
+        let ref_name = contributor_ref(&contributor.id);
+        let reference = self.repo.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+        let old_tree = parent_commit.tree()?;
+
+        let empty_oid = self.repo.blob(b"")?;
+        let path = format!("emails/{email}");
+        let parts: Vec<&str> = path.split('/').collect();
+        let new_tree_oid = build_tree(self.repo, Some(&old_tree), &parts, empty_oid)?;
+        let new_tree = self.repo.find_tree(new_tree_oid)?;
+
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            "add contributor email",
+            &new_tree,
+            &[&parent_commit],
+        )?;
+
+        let mut emails = contributor.emails;
+        if !emails.contains(&email.to_string()) {
+            emails.push(email.to_string());
+        }
+        Ok(Contributor {
+            id: contributor.id,
+            handle: h,
+            names: contributor.names,
+            emails,
+            keys: contributor.keys,
+            roles: contributor.roles,
+        })
+    }
+
+    /// Remove an email address from a contributor.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the contributor or email doesn't exist.
+    pub fn remove_contributor_email(&self, handle: &str, email: &str) -> Result<Contributor> {
+        let h = Handle::new(handle)?;
+        let contributor = self
+            .find_contributor_by_handle(&h)?
+            .ok_or_else(|| Error::NotFound(handle.to_string()))?;
+
+        let ref_name = contributor_ref(&contributor.id);
+        let reference = self.repo.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+        let old_tree = parent_commit.tree()?;
+
+        let new_tree_oid = drop_from_subtree(self.repo, &old_tree, "emails", email)?;
+        let new_tree = self.repo.find_tree(new_tree_oid)?;
+
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            "remove contributor email",
+            &new_tree,
+            &[&parent_commit],
+        )?;
+
+        let mut emails = contributor.emails;
+        emails.retain(|e| e != email);
+        Ok(Contributor {
+            id: contributor.id,
+            handle: h,
+            names: contributor.names,
+            emails,
+            keys: contributor.keys,
+            roles: contributor.roles,
+        })
+    }
+
+    /// Add a public key to a contributor.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the contributor doesn't exist.
+    pub fn add_contributor_key(
+        &self,
+        handle: &str,
+        fingerprint: &str,
+        material: &[u8],
+    ) -> Result<Contributor> {
+        let h = Handle::new(handle)?;
+        let contributor = self
+            .find_contributor_by_handle(&h)?
+            .ok_or_else(|| Error::NotFound(handle.to_string()))?;
+
+        let ref_name = contributor_ref(&contributor.id);
+        let reference = self.repo.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+        let old_tree = parent_commit.tree()?;
+
+        let blob_oid = self.repo.blob(material)?;
+        let path = format!("keys/{fingerprint}");
+        let parts: Vec<&str> = path.split('/').collect();
+        let new_tree_oid = build_tree(self.repo, Some(&old_tree), &parts, blob_oid)?;
+        let new_tree = self.repo.find_tree(new_tree_oid)?;
+
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            "add contributor key",
+            &new_tree,
+            &[&parent_commit],
+        )?;
+
+        let mut keys = contributor.keys;
+        if !keys.contains(&fingerprint.to_string()) {
+            keys.push(fingerprint.to_string());
+        }
+        Ok(Contributor {
+            id: contributor.id,
+            handle: h,
+            names: contributor.names,
+            emails: contributor.emails,
+            keys,
+            roles: contributor.roles,
+        })
+    }
+
+    /// Remove a public key from a contributor.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the contributor or key doesn't exist.
+    pub fn remove_contributor_key(&self, handle: &str, fingerprint: &str) -> Result<Contributor> {
+        let h = Handle::new(handle)?;
+        let contributor = self
+            .find_contributor_by_handle(&h)?
+            .ok_or_else(|| Error::NotFound(handle.to_string()))?;
+
+        let ref_name = contributor_ref(&contributor.id);
+        let reference = self.repo.find_reference(&ref_name)?;
+        let parent_commit = reference.peel_to_commit()?;
+        let old_tree = parent_commit.tree()?;
+
+        let new_tree_oid = drop_from_subtree(self.repo, &old_tree, "keys", fingerprint)?;
+        let new_tree = self.repo.find_tree(new_tree_oid)?;
+
+        let sig = self.repo.signature()?;
+        self.repo.commit(
+            Some(&ref_name),
+            &sig,
+            &sig,
+            "remove contributor key",
+            &new_tree,
+            &[&parent_commit],
+        )?;
+
+        let mut keys = contributor.keys;
+        keys.retain(|k| k != fingerprint);
+        Ok(Contributor {
+            id: contributor.id,
+            handle: h,
+            names: contributor.names,
+            emails: contributor.emails,
+            keys,
+            roles: contributor.roles,
         })
     }
 

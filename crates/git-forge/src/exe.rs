@@ -1011,6 +1011,95 @@ impl Executor {
                         println!("renamed contributor {} → {} ({})", old, c.handle, c.id);
                     }
                 }
+
+                ContributorCommand::AddName { handle, name } => {
+                    let c = self.store().add_contributor_name(handle, name)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added name {name:?} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveName { handle, name } => {
+                    let c = self.store().remove_contributor_name(handle, name)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed name {name:?} from {handle}");
+                    }
+                }
+
+                ContributorCommand::AddEmail { handle, email } => {
+                    let c = self.store().add_contributor_email(handle, email)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added email {email} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveEmail { handle, email } => {
+                    let c = self.store().remove_contributor_email(handle, email)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed email {email} from {handle}");
+                    }
+                }
+
+                ContributorCommand::AddKey {
+                    handle,
+                    fingerprint,
+                    file,
+                } => {
+                    let material = if let Some(path) = file {
+                        std::fs::read(path)?
+                    } else {
+                        use std::io::Read;
+                        let mut buf = Vec::new();
+                        std::io::stdin().read_to_end(&mut buf)?;
+                        buf
+                    };
+                    let c = self
+                        .store()
+                        .add_contributor_key(handle, fingerprint, &material)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added key {fingerprint} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveKey {
+                    handle,
+                    fingerprint,
+                } => {
+                    let c = self.store().remove_contributor_key(handle, fingerprint)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed key {fingerprint} from {handle}");
+                    }
+                }
+
+                ContributorCommand::AddRole { handle, role } => {
+                    let c = self.store().add_contributor_role(handle, role)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added role {role} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveRole { handle, role } => {
+                    let c = self.store().remove_contributor_role(handle, role)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed role {role} from {handle}");
+                    }
+                }
             },
 
             Command::Config { command } => match command {

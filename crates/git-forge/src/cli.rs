@@ -133,6 +133,65 @@ pub enum ContributorCommand {
         /// New handle.
         new: String,
     },
+    /// Add a display name.
+    AddName {
+        /// Contributor handle.
+        handle: String,
+        /// Display name to add.
+        name: String,
+    },
+    /// Remove a display name.
+    RemoveName {
+        /// Contributor handle.
+        handle: String,
+        /// Display name to remove.
+        name: String,
+    },
+    /// Add an email address.
+    AddEmail {
+        /// Contributor handle.
+        handle: String,
+        /// Email address to add.
+        email: String,
+    },
+    /// Remove an email address.
+    RemoveEmail {
+        /// Contributor handle.
+        handle: String,
+        /// Email address to remove.
+        email: String,
+    },
+    /// Add a public key.
+    AddKey {
+        /// Contributor handle.
+        handle: String,
+        /// Key fingerprint (entry name under keys/).
+        fingerprint: String,
+        /// File containing public key material (reads stdin if omitted).
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
+    },
+    /// Remove a public key.
+    RemoveKey {
+        /// Contributor handle.
+        handle: String,
+        /// Key fingerprint to remove.
+        fingerprint: String,
+    },
+    /// Add a role.
+    AddRole {
+        /// Contributor handle.
+        handle: String,
+        /// Role to grant (e.g. `admin`, `maintainer`).
+        role: String,
+    },
+    /// Remove a role.
+    RemoveRole {
+        /// Contributor handle.
+        handle: String,
+        /// Role to revoke.
+        role: String,
+    },
 }
 
 /// Filter for comment thread resolved state.
