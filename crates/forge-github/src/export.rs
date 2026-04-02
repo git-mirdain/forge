@@ -85,7 +85,7 @@ pub async fn export_issues(
                 let sigil = cfg.sigils.get("issue").map_or("GH#", String::as_str);
                 let display_id = format!("{sigil}{number}");
                 if let Err(e) = store.write_display_id(ISSUE_INDEX, &display_id, &issue.oid) {
-                    eprintln!("forge: failed to write display ID for issue {number}: {e}");
+                    eprintln!("forge: failed to write display ID for issue {number}: {e:#}");
                     report.failed += 1;
                     continue;
                 }
@@ -95,7 +95,7 @@ pub async fn export_issues(
                 report.exported += 1;
             }
             Err(e) => {
-                eprintln!("forge: failed to export issue {}: {e}", issue.oid);
+                eprintln!("forge: failed to export issue {}: {e:#}", issue.oid);
                 report.failed += 1;
             }
         }
@@ -164,7 +164,7 @@ async fn export_issue_comments_with_state(
                 }
                 Err(e) => {
                     eprintln!(
-                        "forge: failed to export comment {} on issue {forge_issue_oid}: {e}",
+                        "forge: failed to export comment {} on issue {forge_issue_oid}: {e:#}",
                         comment.oid
                     );
                     report.failed += 1;
@@ -241,7 +241,7 @@ pub async fn export_reviews(
                 let sigil = cfg.sigils.get("review").map_or("GH#", String::as_str);
                 let display_id = format!("{sigil}{number}");
                 if let Err(e) = store.write_display_id(REVIEW_INDEX, &display_id, &review.oid) {
-                    eprintln!("forge: failed to write display ID for review {number}: {e}");
+                    eprintln!("forge: failed to write display ID for review {number}: {e:#}");
                     report.failed += 1;
                     continue;
                 }
@@ -251,7 +251,7 @@ pub async fn export_reviews(
                 report.exported += 1;
             }
             Err(e) => {
-                eprintln!("forge: failed to export review {}: {e}", review.oid);
+                eprintln!("forge: failed to export review {}: {e:#}", review.oid);
                 report.failed += 1;
             }
         }
@@ -352,7 +352,7 @@ async fn export_review_comments_with_state(
                         }
                         Err(e) => {
                             eprintln!(
-                                "forge: failed to export review comment {} on review {forge_review_oid}: {e}",
+                                "forge: failed to export review comment {} on review {forge_review_oid}: {e:#}",
                                 comment.oid
                             );
                             report.failed += 1;
@@ -373,7 +373,7 @@ async fn export_review_comments_with_state(
                 }
                 Err(e) => {
                     eprintln!(
-                        "forge: failed to export comment {} on review {forge_review_oid}: {e}",
+                        "forge: failed to export comment {} on review {forge_review_oid}: {e:#}",
                         comment.oid
                     );
                     report.failed += 1;

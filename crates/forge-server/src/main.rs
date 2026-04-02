@@ -52,7 +52,7 @@ async fn run(repo: &Repository, adapters: &[GitHubAdapter], args: &Args) -> Resu
         }
 
         if let Err(e) = rebuild_comments_index(repo) {
-            eprintln!("forge-server: index rebuild failed: {e}");
+            eprintln!("forge-server: index rebuild failed: {e:#}");
         }
 
         if args.once {

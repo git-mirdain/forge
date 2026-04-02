@@ -68,7 +68,7 @@ pub async fn import_issues(
                 report.imported += 1;
             }
             Err(e) => {
-                eprintln!("forge: failed to import issue {}: {e}", issue.number);
+                eprintln!("forge: failed to import issue {}: {e:#}", issue.number);
                 report.failed += 1;
             }
         }
@@ -143,7 +143,7 @@ async fn import_issue_comments_with_state(
             }
             Err(e) => {
                 eprintln!(
-                    "forge: failed to import comment {} on issue {github_number}: {e}",
+                    "forge: failed to import comment {} on issue {github_number}: {e:#}",
                     comment.id
                 );
                 report.failed += 1;
@@ -217,7 +217,7 @@ pub async fn import_reviews(
                 report.imported += 1;
             }
             Err(e) => {
-                eprintln!("forge: failed to import PR {}: {e}", pull.number);
+                eprintln!("forge: failed to import PR {}: {e:#}", pull.number);
                 report.failed += 1;
             }
         }
@@ -293,7 +293,7 @@ async fn import_review_comments_with_state(
             }
             Err(e) => {
                 eprintln!(
-                    "forge: failed to import review comment {} on PR {github_number}: {e}",
+                    "forge: failed to import review comment {} on PR {github_number}: {e:#}",
                     comment.id
                 );
                 report.failed += 1;

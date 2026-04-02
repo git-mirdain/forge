@@ -6,7 +6,7 @@ fn main() {
         println!(); // add a newline for better visual separation
         exe.run(&cli)
     }) {
-        eprintln!("error: {e}");
+        eprintln!("error: {e:#}");
         std::process::exit(1);
     }
 }
