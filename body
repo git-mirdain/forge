@@ -1,0 +1,1 @@
+The forge-mcp server exposes tools for issues, reviews, and comments but has no tools for contributors. Agents and editor integrations have no way to list contributors, look up a handle, or assign a contributor UUID without dropping out to the CLI. Add at minimum `list_contributors` and `get_contributor` tools.\n\nGenerated-by: Claude Code (Claude Sonnet 4.6)
