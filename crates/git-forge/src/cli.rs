@@ -30,6 +30,12 @@ pub struct Cli {
 /// Top-level subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Manage contributors.
+    Contributor {
+        /// Contributor subcommand.
+        #[command(subcommand)]
+        command: ContributorCommand,
+    },
     /// Manage issues.
     Issue {
         /// Issue subcommand.
@@ -89,37 +95,102 @@ pub enum ConfigCommand {
         /// Repository name.
         repo: String,
     },
-    /// Manage contributors.
-    Contributor {
-        /// Contributor subcommand.
-        #[command(subcommand)]
-        command: ContributorCommand,
-    },
 }
 
 /// Contributor subcommands.
 #[derive(Subcommand, Debug)]
 pub enum ContributorCommand {
-    /// Register a contributor.
+    /// Bootstrap the first contributor from the current git identity (admin role).
+    Bootstrap,
+    /// Add a new contributor.
     Add {
-        /// Contributor ID (defaults to git user name).
-        #[arg(long)]
-        id: Option<String>,
+        /// Handle (unique short name, no spaces or slashes).
+        handle: String,
 
-        /// Email addresses (defaults to git user email).
+        /// Display names (defaults to git user.name).
+        #[arg(long = "name", short = 'n')]
+        names: Vec<String>,
+
+        /// Email addresses (defaults to git user.email).
         #[arg(long = "email", short = 'e')]
         emails: Vec<String>,
 
-        /// Display names (defaults to git user name).
-        #[arg(long = "name", short = 'n')]
-        names: Vec<String>,
+        /// Roles to grant (e.g. `admin`, `maintainer`).
+        #[arg(long = "role", short = 'r')]
+        roles: Vec<String>,
     },
     /// List all contributors.
     List,
-    /// Remove a contributor.
-    Remove {
-        /// Contributor ID.
-        id: String,
+    /// Show a contributor by handle or UUID.
+    Show {
+        /// Handle or UUID of the contributor.
+        reference: String,
+    },
+    /// Rename a contributor's handle.
+    Rename {
+        /// Current handle.
+        old: String,
+        /// New handle.
+        new: String,
+    },
+    /// Add a display name.
+    AddName {
+        /// Contributor handle.
+        handle: String,
+        /// Display name to add.
+        name: String,
+    },
+    /// Remove a display name.
+    RemoveName {
+        /// Contributor handle.
+        handle: String,
+        /// Display name to remove.
+        name: String,
+    },
+    /// Add an email address.
+    AddEmail {
+        /// Contributor handle.
+        handle: String,
+        /// Email address to add.
+        email: String,
+    },
+    /// Remove an email address.
+    RemoveEmail {
+        /// Contributor handle.
+        handle: String,
+        /// Email address to remove.
+        email: String,
+    },
+    /// Add a public key.
+    AddKey {
+        /// Contributor handle.
+        handle: String,
+        /// Key fingerprint (entry name under keys/).
+        fingerprint: String,
+        /// File containing public key material (reads stdin if omitted).
+        #[arg(long, short = 'f')]
+        file: Option<PathBuf>,
+    },
+    /// Remove a public key.
+    RemoveKey {
+        /// Contributor handle.
+        handle: String,
+        /// Key fingerprint to remove.
+        fingerprint: String,
+    },
+    /// Add a role.
+    AddRole {
+        /// Contributor handle.
+        handle: String,
+        /// Role to grant (e.g. `admin`, `maintainer`).
+        role: String,
+    },
+    /// Remove a role.
+    RemoveRole {
+        /// Contributor handle.
+        handle: String,
+        /// Role to revoke.
+        role: String,
     },
 }
 
@@ -311,19 +382,25 @@ pub enum ReviewCommand {
         interactive: bool,
     },
 
-    /// Close a review.
+    /// Close a review without merging.
     Close {
         /// Display ID or OID prefix.
         reference: String,
     },
 
-    /// Approve a review.
+    /// Mark a review as merged.
+    Merge {
+        /// Display ID or OID prefix.
+        reference: String,
+    },
+
+    /// Approve a review (all objects, or a specific path resolved against HEAD).
     Approve {
         /// Display ID or OID prefix.
         reference: String,
 
-        /// Optional approval message.
-        message: Option<String>,
+        /// File path to approve (resolves to OID via HEAD tree). Omit to approve all.
+        path: Option<std::path::PathBuf>,
     },
 
     /// Revoke your approval on a review.

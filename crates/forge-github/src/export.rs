@@ -231,7 +231,7 @@ pub async fn export_reviews(
                 &cfg.owner,
                 &cfg.repo,
                 &review.title,
-                &review.description,
+                &review.body,
                 source_ref,
                 base_ref,
             )

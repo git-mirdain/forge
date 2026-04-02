@@ -34,7 +34,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 git2 = "0.20.4"
 thiserror = "2"
-git-ledger = "0.1.0-alpha.3"
+git-ledger = "0.1.0-alpha.4"
 git-chain = "0.1.0-alpha.1"
 tempfile = "3"
 octocrab = "0.44"

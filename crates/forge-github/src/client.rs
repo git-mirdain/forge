@@ -69,8 +69,8 @@ pub struct GhPull {
     pub body: Option<String>,
     /// `"open"` or `"closed"`.
     pub state: String,
-    /// Whether the PR has been merged.
-    pub merged: bool,
+    /// Timestamp when the PR was merged, or `None` if not merged.
+    pub merged_at: Option<String>,
     /// Base branch ref.
     pub base: GhRef,
     /// Head branch ref.

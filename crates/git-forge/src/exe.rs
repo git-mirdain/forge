@@ -31,17 +31,6 @@ pub struct ConfigEntry {
     sigils: BTreeMap<String, String>,
 }
 
-/// A contributor identity stored in the forge config.
-#[derive(Facet)]
-pub struct Contributor {
-    /// The contributor's unique identifier (typically the git user name).
-    pub id: String,
-    /// Known email addresses.
-    pub emails: Vec<String>,
-    /// Known display names.
-    pub names: Vec<String>,
-}
-
 /// Owns a [`Repository`] and executes forge operations.
 pub struct Executor {
     repo: Repository,
@@ -143,12 +132,11 @@ impl Executor {
     pub fn create_review(
         &self,
         title: &str,
-        description: &str,
+        body: &str,
         target: &ReviewTarget,
         source_ref: Option<&str>,
     ) -> Result<Review> {
-        self.store()
-            .create_review(title, description, target, source_ref)
+        self.store().create_review(title, body, target, source_ref)
     }
 
     /// Fetch a review by display ID or OID prefix.
@@ -178,28 +166,26 @@ impl Executor {
         &self,
         reference: &str,
         title: Option<&str>,
-        description: Option<&str>,
+        body: Option<&str>,
         state: Option<&ReviewState>,
     ) -> Result<Review> {
-        self.store()
-            .update_review(reference, title, description, state)
+        self.store().update_review(reference, title, body, state)
     }
 
     /// Approve a review as the current git user.
     ///
     /// # Errors
     /// Returns an error if the review does not exist or a git operation fails.
-    pub fn approve_review(&self, reference: &str, message: Option<&str>) -> Result<Review> {
-        self.ensure_contributor()?;
-        self.store().approve_review(reference, message)
+    pub fn approve_review(&self, reference: &str, contributor_uuid: &str) -> Result<Review> {
+        self.store().approve_review(reference, contributor_uuid)
     }
 
     /// Revoke the current user's approval on a review.
     ///
     /// # Errors
     /// Returns an error if the review does not exist or a git operation fails.
-    pub fn revoke_approval(&self, reference: &str) -> Result<Review> {
-        self.store().revoke_approval(reference)
+    pub fn revoke_approval(&self, reference: &str, contributor_uuid: &str) -> Result<Review> {
+        self.store().revoke_approval(reference, contributor_uuid)
     }
 
     /// Retarget a review to a new head, migrating carry-forward comments.
@@ -643,131 +629,6 @@ impl Executor {
         Ok(entries)
     }
 
-    /// Ensure the current git user is registered as a contributor.
-    ///
-    /// If a contributor entry already contains the current email, this is a
-    /// no-op. Otherwise the user's name and email are appended to their
-    /// contributor record (creating it if necessary).
-    ///
-    /// # Errors
-    /// Returns an error if `user.name` or `user.email` is not configured.
-    fn ensure_contributor(&self) -> Result<()> {
-        let cfg = self.repo.config()?;
-        let name = cfg
-            .get_string("user.name")
-            .map_err(|_| Error::Config("user.name not set".into()))?;
-        let email = cfg
-            .get_string("user.email")
-            .map_err(|_| Error::Config("user.email not set".into()))?;
-
-        let emails =
-            crate::refs::read_config_subtree(&self.repo, &format!("contributors/{name}/emails"))?;
-        if emails.contains_key(&email) {
-            return Ok(());
-        }
-
-        self.contributor_add(&name, &[email.as_str()], &[name.as_str()])
-    }
-
-    /// Register a contributor with explicit emails and names.
-    ///
-    /// Entries are additive — calling this again with the same ID appends
-    /// new emails and names without removing existing ones.
-    ///
-    /// # Errors
-    /// Returns an error if a git operation fails.
-    pub fn contributor_add(&self, id: &str, emails: &[&str], names: &[&str]) -> Result<()> {
-        for email in emails {
-            crate::refs::write_config_blob(
-                &self.repo,
-                &format!("contributors/{id}/emails/{email}"),
-                "",
-            )?;
-        }
-        for name in names {
-            crate::refs::write_config_blob(
-                &self.repo,
-                &format!("contributors/{id}/names/{name}"),
-                "",
-            )?;
-        }
-        Ok(())
-    }
-
-    /// List all registered contributors.
-    ///
-    /// # Errors
-    /// Returns an error if a git operation fails.
-    pub fn contributor_list(&self) -> Result<Vec<Contributor>> {
-        let reference = match self.repo.find_reference(crate::refs::CONFIG) {
-            Ok(r) => r,
-            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.into()),
-        };
-        let root_tree = reference.peel_to_commit()?.tree()?;
-        let contrib_entry = match root_tree.get_path(std::path::Path::new("contributors")) {
-            Ok(e) => e,
-            Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(e.into()),
-        };
-        let contrib_tree = self.repo.find_tree(contrib_entry.id())?;
-
-        let mut contributors = Vec::new();
-        for entry in &contrib_tree {
-            if entry.kind() != Some(ObjectType::Tree) {
-                continue;
-            }
-            let Some(id) = entry.name() else { continue };
-            let emails =
-                crate::refs::read_config_subtree(&self.repo, &format!("contributors/{id}/emails"))?;
-            let names =
-                crate::refs::read_config_subtree(&self.repo, &format!("contributors/{id}/names"))?;
-            contributors.push(Contributor {
-                id: id.to_string(),
-                emails: emails.into_keys().collect(),
-                names: names.into_keys().collect(),
-            });
-        }
-        Ok(contributors)
-    }
-
-    /// Remove a contributor by ID.
-    ///
-    /// # Errors
-    /// Returns an error if the contributor does not exist.
-    pub fn contributor_remove(&self, id: &str) -> Result<()> {
-        let reference = self
-            .repo
-            .find_reference(crate::refs::CONFIG)
-            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
-        let parent = reference.peel_to_commit()?;
-        let root_tree = parent.tree()?;
-
-        let contrib_entry = root_tree
-            .get_path(std::path::Path::new("contributors"))
-            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
-        let contrib_tree = self.repo.find_tree(contrib_entry.id())?;
-        let mut builder = self.repo.treebuilder(Some(&contrib_tree))?;
-        builder
-            .remove(id)
-            .map_err(|_| Error::Config(format!("no contributor: {id}")))?;
-
-        let new_contrib_oid = builder.write()?;
-        let root_oid =
-            rebuild_tree_upward(&self.repo, &root_tree, &["contributors"], new_contrib_oid)?;
-        let new_root = self.repo.find_tree(root_oid)?;
-        let sig = self.repo.signature()?;
-        self.repo.commit(
-            Some(crate::refs::CONFIG),
-            &sig,
-            &sig,
-            "forge: remove contributor",
-            &new_root,
-            &[&parent],
-        )?;
-        Ok(())
-    }
-
     /// Remove a provider config entry.
     ///
     /// # Errors
@@ -897,6 +758,26 @@ fn default_sigils(provider: &str) -> BTreeMap<String, String> {
         ("issue".to_string(), issue.to_string()),
         ("review".to_string(), review.to_string()),
     ])
+}
+
+/// Resolve the current git user's email to their contributor UUID.
+///
+/// # Errors
+/// Returns an error if `user.email` is not configured or no matching
+/// contributor is found.
+fn current_contributor_uuid(repo: &git2::Repository, store: &crate::Store<'_>) -> Result<String> {
+    let cfg = repo.config()?;
+    let email = cfg
+        .get_string("user.email")
+        .map_err(|_| Error::Config("user.email not set".into()))?;
+    let map = store.email_to_contributor_map()?;
+    map.get(&email)
+        .map(|id| id.as_str().to_string())
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "no contributor found for email {email}; run `forge contributor bootstrap` first"
+            ))
+        })
 }
 
 /// Rebuild a tree chain from the leaf upward, replacing the entry at the
@@ -1031,8 +912,196 @@ impl Executor {
             Command, CommentCommand, ConfigCommand, ContributorCommand, IssueCommand, ReviewCommand,
         };
         use crate::comment::{edit_in_thread, find_thread_by_comment, list_thread_comments};
+        use crate::contributor::Contributor;
 
         match &cli.command {
+            Command::Contributor { command } => match command {
+                ContributorCommand::Bootstrap => {
+                    let c = self.store().bootstrap_contributor()?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("bootstrapped contributor {} ({})", c.handle, c.id);
+                    }
+                }
+
+                ContributorCommand::Add {
+                    handle,
+                    names,
+                    emails,
+                    roles,
+                } => {
+                    let sig = self.repo.signature()?;
+                    let default_name;
+                    let names: Vec<&str> = if names.is_empty() {
+                        default_name = sig.name().unwrap_or("unknown").to_string();
+                        vec![default_name.as_str()]
+                    } else {
+                        names.iter().map(String::as_str).collect()
+                    };
+                    let default_email;
+                    let emails: Vec<&str> = if emails.is_empty() {
+                        default_email = sig.email().unwrap_or("unknown").to_string();
+                        vec![default_email.as_str()]
+                    } else {
+                        emails.iter().map(String::as_str).collect()
+                    };
+                    let roles: Vec<&str> = roles.iter().map(String::as_str).collect();
+                    let c = self
+                        .store()
+                        .create_contributor(handle, &names, &emails, &roles)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added contributor {} ({})", c.handle, c.id);
+                    }
+                }
+
+                ContributorCommand::List => {
+                    let contributors = self.store().list_contributors()?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            facet_json::to_string_pretty(&contributors).expect("serialize")
+                        );
+                    } else {
+                        for c in &contributors {
+                            let roles = if c.roles.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  roles={}", c.roles.join(","))
+                            };
+                            println!("{}  {}{}", c.id, c.handle, roles);
+                        }
+                    }
+                }
+
+                ContributorCommand::Show { reference } => {
+                    let c: Contributor = if let Ok(c) = self.store().get_contributor(reference) {
+                        c
+                    } else {
+                        let id = self.store().resolve_handle(reference)?;
+                        self.store().get_contributor(id.as_str())?
+                    };
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("id:     {}", c.id);
+                        println!("handle: {}", c.handle);
+                        if !c.names.is_empty() {
+                            println!("names:  {}", c.names.join(", "));
+                        }
+                        if !c.emails.is_empty() {
+                            println!("emails: {}", c.emails.join(", "));
+                        }
+                        if !c.roles.is_empty() {
+                            println!("roles:  {}", c.roles.join(", "));
+                        }
+                        if !c.keys.is_empty() {
+                            println!("keys:   {}", c.keys.join(", "));
+                        }
+                    }
+                }
+
+                ContributorCommand::Rename { old, new } => {
+                    let c = self.store().rename_contributor(old, new)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("renamed contributor {} → {} ({})", old, c.handle, c.id);
+                    }
+                }
+
+                ContributorCommand::AddName { handle, name } => {
+                    let c = self.store().add_contributor_name(handle, name)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added name {name:?} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveName { handle, name } => {
+                    let c = self.store().remove_contributor_name(handle, name)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed name {name:?} from {handle}");
+                    }
+                }
+
+                ContributorCommand::AddEmail { handle, email } => {
+                    let c = self.store().add_contributor_email(handle, email)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added email {email} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveEmail { handle, email } => {
+                    let c = self.store().remove_contributor_email(handle, email)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed email {email} from {handle}");
+                    }
+                }
+
+                ContributorCommand::AddKey {
+                    handle,
+                    fingerprint,
+                    file,
+                } => {
+                    let material = if let Some(path) = file {
+                        std::fs::read(path)?
+                    } else {
+                        use std::io::Read;
+                        let mut buf = Vec::new();
+                        std::io::stdin().read_to_end(&mut buf)?;
+                        buf
+                    };
+                    let c = self
+                        .store()
+                        .add_contributor_key(handle, fingerprint, &material)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added key {fingerprint} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveKey {
+                    handle,
+                    fingerprint,
+                } => {
+                    let c = self.store().remove_contributor_key(handle, fingerprint)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed key {fingerprint} from {handle}");
+                    }
+                }
+
+                ContributorCommand::AddRole { handle, role } => {
+                    let c = self.store().add_contributor_role(handle, role)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("added role {role} to {handle}");
+                    }
+                }
+
+                ContributorCommand::RemoveRole { handle, role } => {
+                    let c = self.store().remove_contributor_role(handle, role)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                    } else {
+                        println!("removed role {role} from {handle}");
+                    }
+                }
+            },
+
             Command::Config { command } => match command {
                 ConfigCommand::Init { remote } => {
                     let remote = remote.as_deref().unwrap_or("origin");
@@ -1095,61 +1164,6 @@ impl Executor {
                         println!("removed {provider}/{owner}/{repo}");
                     }
                 }
-
-                ConfigCommand::Contributor { command } => match command {
-                    ContributorCommand::Add { id, emails, names } => {
-                        let sig = self.repo.signature()?;
-                        let sig_name = sig.name().unwrap_or("unknown");
-                        let sig_email = sig.email().unwrap_or("unknown");
-
-                        let id = id.as_deref().unwrap_or(sig_name);
-                        let default_emails;
-                        let emails: Vec<&str> = if emails.is_empty() {
-                            default_emails = [sig_email.to_string()];
-                            default_emails.iter().map(String::as_str).collect()
-                        } else {
-                            emails.iter().map(String::as_str).collect()
-                        };
-                        let default_names;
-                        let names: Vec<&str> = if names.is_empty() {
-                            default_names = [sig_name.to_string()];
-                            default_names.iter().map(String::as_str).collect()
-                        } else {
-                            names.iter().map(String::as_str).collect()
-                        };
-
-                        self.contributor_add(id, &emails, &names)?;
-                        if !cli.json {
-                            println!("added contributor {id}");
-                        }
-                    }
-
-                    ContributorCommand::List => {
-                        let contributors = self.contributor_list()?;
-                        if cli.json {
-                            println!(
-                                "{}",
-                                facet_json::to_string_pretty(&contributors).expect("serialize")
-                            );
-                        } else {
-                            for c in &contributors {
-                                println!(
-                                    "{}  emails={} names={}",
-                                    c.id,
-                                    c.emails.join(","),
-                                    c.names.join(","),
-                                );
-                            }
-                        }
-                    }
-
-                    ContributorCommand::Remove { id } => {
-                        self.contributor_remove(id)?;
-                        if !cli.json {
-                            println!("removed contributor {id}");
-                        }
-                    }
-                },
             },
 
             Command::Comment { command } => match command {
@@ -1289,9 +1303,9 @@ impl Executor {
                     let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
                     let interactive =
                         *interactive || should_interact(title.is_none() && resolved_body.is_none());
-                    let (title, description) = if interactive {
+                    let (title, body) = if interactive {
                         let input = crate::interactive::prompt_new_review(title.as_deref())?;
-                        (input.title, input.description)
+                        (input.title, input.body)
                     } else {
                         (
                             title.clone().unwrap_or_default(),
@@ -1299,7 +1313,7 @@ impl Executor {
                         )
                     };
                     let title = title.as_str();
-                    let description = description.as_str();
+                    let body = body.as_str();
 
                     // Resolve target to a git object OID.
                     let head_oid = match (head, path) {
@@ -1322,8 +1336,7 @@ impl Executor {
                         head: head_oid,
                         base: base_oid,
                     };
-                    let review =
-                        self.create_review(title, description, &target, source_ref.as_deref())?;
+                    let review = self.create_review(title, body, &target, source_ref.as_deref())?;
                     print_review(&review, cli.json);
                 }
 
@@ -1384,7 +1397,7 @@ impl Executor {
                         let input = crate::interactive::prompt_edit_review(&current)?;
                         (
                             input.title.or_else(|| title.clone()),
-                            input.description.or_else(|| resolved_body.clone()),
+                            input.body.or_else(|| resolved_body.clone()),
                             input.state.or_else(|| state.clone()),
                         )
                     } else {
@@ -1405,13 +1418,27 @@ impl Executor {
                     print_review(&review, cli.json);
                 }
 
-                ReviewCommand::Approve { reference, message } => {
-                    let review = self.approve_review(reference, message.as_deref())?;
+                ReviewCommand::Merge { reference } => {
+                    let review =
+                        self.update_review(reference, None, None, Some(&ReviewState::Merged))?;
+                    print_review(&review, cli.json);
+                }
+
+                ReviewCommand::Approve { reference, path } => {
+                    let uuid = current_contributor_uuid(&self.repo, &self.store())?;
+                    let review = if let Some(p) = path {
+                        let blob_oid = self.resolve_path(p, cli.allow_dirty)?;
+                        self.store()
+                            .approve_review_object(reference, &blob_oid, &uuid)?
+                    } else {
+                        self.approve_review(reference, &uuid)?
+                    };
                     print_review(&review, cli.json);
                 }
 
                 ReviewCommand::Unapprove { reference } => {
-                    let review = self.revoke_approval(reference)?;
+                    let uuid = current_contributor_uuid(&self.repo, &self.store())?;
+                    let review = self.revoke_approval(reference, &uuid)?;
                     print_review(&review, cli.json);
                 }
 
@@ -1889,12 +1916,17 @@ fn print_review(review: &Review, json: bool) {
         println!("ref:         {sref}");
     }
     if !review.approvals.is_empty() {
-        let names: Vec<&str> = review.approvals.iter().map(|(n, _)| n.as_str()).collect();
-        println!("approved-by: {}", names.join(", "));
+        for entry in &review.approvals {
+            println!(
+                "approved[{}]: {}",
+                &entry.oid[..entry.oid.len().min(12)],
+                entry.approvers.join(", ")
+            );
+        }
     }
-    if !review.description.is_empty() {
+    if !review.body.is_empty() {
         println!();
-        println!("{}", review.description);
+        println!("{}", review.body);
     }
 }
 
@@ -2080,17 +2112,7 @@ fn review_coverage(
     walk_tree(repo, &tree, "", &mut all_blobs);
 
     // Collect blob OIDs covered by any approved review.
-    let reviews = executor.list_reviews(None)?;
-    let mut approved_oids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for review in &reviews {
-        if review.approvals.is_empty() {
-            continue;
-        }
-        let files = review_target_files(repo, review)?;
-        for (_, oid) in files {
-            approved_oids.insert(oid);
-        }
-    }
+    let approved_oids = executor.store().approved_oids()?;
 
     let mut covered = Vec::new();
     let mut uncovered = Vec::new();

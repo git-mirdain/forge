@@ -240,7 +240,11 @@ fn gh_pull(number: u64, title: &str, merged: bool) -> GhPull {
         title: title.to_string(),
         body: Some(format!("body of {title}")),
         state: state.to_string(),
-        merged,
+        merged_at: if merged {
+            Some("2025-01-02T00:00:00Z".into())
+        } else {
+            None
+        },
         base: GhRef {
             ref_field: "main".to_string(),
             sha: "0000000000000000000000000000000000000000".to_string(),

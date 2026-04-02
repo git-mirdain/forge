@@ -107,30 +107,26 @@ impl Store<'_> {
         labels: &[&str],
         assignees: &[&str],
     ) -> Result<Issue> {
-        let mut fields: Vec<(&str, &[u8])> = vec![
-            ("title", title.as_bytes()),
-            ("state", b"open"),
-            ("body", body.as_bytes()),
-        ];
-
         let label_paths: Vec<String> = labels.iter().map(|l| format!("labels/{l}")).collect();
         let assignee_paths: Vec<String> =
             assignees.iter().map(|a| format!("assignees/{a}")).collect();
-        let label_fields: Vec<(&str, &[u8])> = label_paths
-            .iter()
-            .map(|p| (p.as_str(), b"" as &[u8]))
-            .collect();
-        let assignee_fields: Vec<(&str, &[u8])> = assignee_paths
-            .iter()
-            .map(|p| (p.as_str(), b"" as &[u8]))
-            .collect();
-        fields.extend(label_fields);
-        fields.extend(assignee_fields);
+
+        let mut mutations: Vec<Mutation<'_>> = vec![
+            Mutation::Set("title", title.as_bytes()),
+            Mutation::Set("state", b"open"),
+            Mutation::Set("body", body.as_bytes()),
+        ];
+        for p in &label_paths {
+            mutations.push(Mutation::Set(p.as_str(), b""));
+        }
+        for p in &assignee_paths {
+            mutations.push(Mutation::Set(p.as_str(), b""));
+        }
 
         let entry = self.repo.create(
             ISSUE_PREFIX,
             &IdStrategy::CommitOid,
-            &fields,
+            &mutations,
             "create issue",
             None,
         )?;
@@ -169,31 +165,27 @@ impl Store<'_> {
         author: &git2::Signature<'_>,
         source: &str,
     ) -> Result<Issue> {
-        let mut fields: Vec<(&str, &[u8])> = vec![
-            ("title", title.as_bytes()),
-            ("state", b"open"),
-            ("body", body.as_bytes()),
-            ("source/url", source.as_bytes()),
-        ];
-
         let label_paths: Vec<String> = labels.iter().map(|l| format!("labels/{l}")).collect();
         let assignee_paths: Vec<String> =
             assignees.iter().map(|a| format!("assignees/{a}")).collect();
-        let label_fields: Vec<(&str, &[u8])> = label_paths
-            .iter()
-            .map(|p| (p.as_str(), b"" as &[u8]))
-            .collect();
-        let assignee_fields: Vec<(&str, &[u8])> = assignee_paths
-            .iter()
-            .map(|p| (p.as_str(), b"" as &[u8]))
-            .collect();
-        fields.extend(label_fields);
-        fields.extend(assignee_fields);
+
+        let mut mutations: Vec<Mutation<'_>> = vec![
+            Mutation::Set("title", title.as_bytes()),
+            Mutation::Set("state", b"open"),
+            Mutation::Set("body", body.as_bytes()),
+            Mutation::Set("source/url", source.as_bytes()),
+        ];
+        for p in &label_paths {
+            mutations.push(Mutation::Set(p.as_str(), b""));
+        }
+        for p in &assignee_paths {
+            mutations.push(Mutation::Set(p.as_str(), b""));
+        }
 
         let entry = self.repo.create(
             ISSUE_PREFIX,
             &IdStrategy::CommitOid,
-            &fields,
+            &mutations,
             "forge: create issue",
             Some(author),
         )?;

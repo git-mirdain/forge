@@ -42,6 +42,19 @@ impl ForgeMcpServer {
     pub(crate) fn open_repo(&self) -> anyhow::Result<Repository> {
         Ok(Repository::open(&self.repo_path)?)
     }
+
+    /// Construct a server pointing at an explicit repository path, for use in tests.
+    #[cfg(test)]
+    pub(crate) fn for_test(repo_path: std::path::PathBuf) -> Self {
+        let mut tool_router = Self::issue_router();
+        tool_router.merge(Self::comment_router());
+        tool_router.merge(Self::review_router());
+        Self {
+            repo_path,
+            tool_router,
+            prompt_router: Self::prompt_router(),
+        }
+    }
 }
 
 #[tool_handler]

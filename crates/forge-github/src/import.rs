@@ -190,7 +190,7 @@ pub async fn import_reviews(
 
         let body = pull.body.as_deref().unwrap_or("");
 
-        let review_state = if pull.merged || pull.state == "closed" {
+        let review_state = if pull.merged_at.is_some() || pull.state == "closed" {
             git_forge::review::ReviewState::Closed
         } else {
             git_forge::review::ReviewState::Open

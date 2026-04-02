@@ -1,6 +1,7 @@
 //! Local-first infrastructure for Git forges.
 
 pub mod comment;
+pub mod contributor;
 pub mod error;
 pub mod issue;
 pub mod refs;

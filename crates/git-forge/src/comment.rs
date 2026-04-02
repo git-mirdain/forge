@@ -473,6 +473,7 @@ pub fn edit_in_thread(
     }
     let effective_range = effective_anchor.start_line.zip(effective_anchor.end_line);
 
+    let has_anchor = !effective_anchor.oid.is_empty();
     let trailers = format_trailers(
         &effective_anchor.oid,
         effective_range,
@@ -481,7 +482,16 @@ pub fn edit_in_thread(
         Some(&parent_str),
     );
     let message = build_message(new_body, &trailers);
-    let tree = build_comment_tree(repo, new_body, Some(effective_anchor), context_lines)?;
+    let tree = build_comment_tree(
+        repo,
+        new_body,
+        if has_anchor {
+            Some(effective_anchor)
+        } else {
+            None
+        },
+        context_lines,
+    )?;
     let entry = repo.append(&ref_name, &message, tree, Some(parent))?;
     let comment = comment_from_chain_entry(repo, &entry)?;
     let _ = index_add_comment_oid(repo, &comment.oid, thread_id);
@@ -495,11 +505,10 @@ pub fn edit_in_thread(
 pub fn list_thread_comments(repo: &Repository, thread_id: &str) -> Result<Vec<Comment>> {
     let ref_name = comment_thread_ref(thread_id);
     let entries = repo.walk(&ref_name, None)?;
-    let mut comments: Vec<Comment> = entries
+    let comments: Vec<Comment> = entries
         .iter()
         .map(|e| comment_from_chain_entry(repo, e))
         .collect::<Result<Vec<_>>>()?;
-    comments.reverse();
     Ok(comments)
 }
 

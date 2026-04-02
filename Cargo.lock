@@ -413,7 +413,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -615,6 +615,8 @@ dependencies = [
  "rmcp",
  "schemars",
  "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -815,9 +817,9 @@ dependencies = [
 
 [[package]]
 name = "git-ledger"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67444aa2761bec06692847314837375cbc9e78c4431b2884dccb3f872c42dfd8"
+checksum = "4f431bdb41a1163615717df4a12fcd2c4c6889c4bd98ce0a5e146b9fc71c84c6"
 dependencies = [
  "clap",
  "clap_mangen",
@@ -1716,7 +1718,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2108,7 +2110,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

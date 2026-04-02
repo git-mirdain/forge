@@ -100,16 +100,16 @@ pub fn prompt_edit_issue(current: &Issue) -> Result<EditIssueInput> {
 pub struct NewReviewInput {
     /// Review title.
     pub title: String,
-    /// Review description in Markdown.
-    pub description: String,
+    /// Review body in Markdown.
+    pub body: String,
 }
 
 /// Collected input from the interactive `review edit` prompts.
 pub struct EditReviewInput {
     /// New title, if changed.
     pub title: Option<String>,
-    /// New description, if changed.
-    pub description: Option<String>,
+    /// New body, if changed.
+    pub body: Option<String>,
     /// New state, if changed.
     pub state: Option<ReviewState>,
 }
@@ -126,11 +126,11 @@ pub fn prompt_new_review(title_hint: Option<&str>) -> Result<NewReviewInput> {
         .prompt()
         .map_err(|_| Error::Interrupted)?;
 
-    let description = Editor::new("Description")
+    let body = Editor::new("Description")
         .prompt()
         .map_err(|_| Error::Interrupted)?;
 
-    Ok(NewReviewInput { title, description })
+    Ok(NewReviewInput { title, body })
 }
 
 /// Prompt for fields to update on an existing review, pre-filled with current values.
@@ -146,14 +146,19 @@ pub fn prompt_edit_review(current: &Review) -> Result<EditReviewInput> {
         .map_err(|_| Error::Interrupted)?;
     let title = (title != current.title).then_some(title);
 
-    let description = Editor::new("Description")
-        .with_predefined_text(&current.description)
+    let body = Editor::new("Description")
+        .with_predefined_text(&current.body)
         .prompt()
         .map_err(|_| Error::Interrupted)?;
-    let description = (description != current.description).then_some(description);
+    let body = (body != current.body).then_some(body);
 
-    let options = vec!["open", "closed"];
-    let default_idx = usize::from(current.state == ReviewState::Closed);
+    let options = vec!["open", "draft", "closed", "merged"];
+    let default_idx = match current.state {
+        ReviewState::Open => 0,
+        ReviewState::Draft => 1,
+        ReviewState::Closed => 2,
+        ReviewState::Merged => 3,
+    };
     let state_str = Select::new("State", options)
         .with_starting_cursor(default_idx)
         .prompt()
@@ -161,11 +166,7 @@ pub fn prompt_edit_review(current: &Review) -> Result<EditReviewInput> {
     let new_state: ReviewState = state_str.parse()?;
     let state = (new_state != current.state).then_some(new_state);
 
-    Ok(EditReviewInput {
-        title,
-        description,
-        state,
-    })
+    Ok(EditReviewInput { title, body, state })
 }
 
 /// Prompt for a comment body using an editor.

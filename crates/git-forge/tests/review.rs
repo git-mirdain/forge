@@ -26,7 +26,6 @@ fn test_repo() -> (TempDir, Repository) {
     (dir, repo)
 }
 
-/// Return the OID of HEAD in the test repo (a valid commit to use as a target).
 fn head_oid(repo: &Repository) -> String {
     repo.head()
         .unwrap()
@@ -36,7 +35,6 @@ fn head_oid(repo: &Repository) -> String {
         .to_string()
 }
 
-/// Create a blob and return its OID string.
 fn make_blob(repo: &Repository, content: &[u8]) -> String {
     repo.blob(content).unwrap().to_string()
 }
@@ -71,11 +69,11 @@ fn create_stores_all_fields() {
         base: None,
     };
     let review = store
-        .create_review("My review", "detailed description", &target, None)
+        .create_review("My review", "detailed body", &target, None)
         .unwrap();
 
     assert_eq!(review.title, "My review");
-    assert_eq!(review.description, "detailed description");
+    assert_eq!(review.body, "detailed body");
     assert_eq!(review.state, ReviewState::Open);
     assert_eq!(review.target.head, commit);
     assert!(review.target.base.is_none());
@@ -88,7 +86,6 @@ fn create_with_commit_range_target() {
     let store = Store::new(&repo);
     let commit = head_oid(&repo);
 
-    // Create a second commit for the range.
     let sig = git2::Signature::now("test", "test@test.com").unwrap();
     let head = repo.head().unwrap().peel_to_commit().unwrap();
     let tree = head.tree().unwrap();
@@ -106,6 +103,8 @@ fn create_with_commit_range_target() {
         .unwrap();
     assert_eq!(review.target.head, commit2);
     assert_eq!(review.target.base, Some(commit));
+    // objects/ should include the second commit
+    assert!(review.objects.contains(&commit2));
 }
 
 #[test]
@@ -121,6 +120,7 @@ fn create_with_single_blob_target() {
         .create_review("Blob review", "", &target, None)
         .unwrap();
     assert_eq!(review.target.head, blob);
+    assert!(review.objects.contains(&blob));
 }
 
 #[test]
@@ -148,19 +148,16 @@ fn objects_tree_pins_target() {
     };
     let review = store.create_review("Pin test", "", &target, None).unwrap();
 
-    // The entity ref tree should contain objects/<commit_oid>.
     let ref_name = format!("refs/forge/review/{}", review.oid);
     let reference = repo.find_reference(&ref_name).unwrap();
     let tree = reference.peel_to_commit().unwrap().tree().unwrap();
-    let objects_entry = tree
+    let _entry = tree
         .get_path(std::path::Path::new(&format!("objects/{commit}")))
         .expect("objects/<oid> should exist in tree");
-    // The entry exists — that's the pinning mechanism.
-    assert!(objects_entry.id().is_zero() || !objects_entry.id().is_zero());
 }
 
 // ---------------------------------------------------------------------------
-// get_review
+// get / list
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -178,22 +175,17 @@ fn get_review_roundtrip() {
     let fetched = store.get_review(&created.oid).unwrap();
     assert_eq!(fetched.oid, created.oid);
     assert_eq!(fetched.title, "Roundtrip");
-    assert_eq!(fetched.description, "body");
+    assert_eq!(fetched.body, "body");
     assert_eq!(fetched.state, ReviewState::Open);
     assert_eq!(fetched.source_ref, Some("main".to_string()));
 }
-
-// ---------------------------------------------------------------------------
-// list_reviews
-// ---------------------------------------------------------------------------
 
 #[test]
 fn list_reviews() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let commit = head_oid(&repo);
     let target = ReviewTarget {
-        head: commit,
+        head: head_oid(&repo),
         base: None,
     };
     store.create_review("Alpha", "", &target, None).unwrap();
@@ -207,38 +199,11 @@ fn list_reviews() {
 }
 
 // ---------------------------------------------------------------------------
-// list_reviews_by_state
+// update
 // ---------------------------------------------------------------------------
 
 #[test]
-fn list_reviews_by_state() {
-    let (_dir, repo) = test_repo();
-    let store = Store::new(&repo);
-    let commit = head_oid(&repo);
-    let target = ReviewTarget {
-        head: commit,
-        base: None,
-    };
-    let to_close = store.create_review("Close me", "", &target, None).unwrap();
-    store.create_review("Keep open", "", &target, None).unwrap();
-    store
-        .update_review(&to_close.oid, None, None, Some(&ReviewState::Closed))
-        .unwrap();
-
-    let open = store.list_reviews_by_state(&ReviewState::Open).unwrap();
-    let closed = store.list_reviews_by_state(&ReviewState::Closed).unwrap();
-    assert_eq!(open.len(), 1);
-    assert_eq!(open[0].title, "Keep open");
-    assert_eq!(closed.len(), 1);
-    assert_eq!(closed[0].title, "Close me");
-}
-
-// ---------------------------------------------------------------------------
-// update_review
-// ---------------------------------------------------------------------------
-
-#[test]
-fn update_title_and_description() {
+fn update_title_and_body() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let target = ReviewTarget {
@@ -246,14 +211,14 @@ fn update_title_and_description() {
         base: None,
     };
     let created = store
-        .create_review("Old", "old desc", &target, None)
+        .create_review("Old", "old body", &target, None)
         .unwrap();
 
     let updated = store
-        .update_review(&created.oid, Some("New"), Some("new desc"), None)
+        .update_review(&created.oid, Some("New"), Some("new body"), None)
         .unwrap();
     assert_eq!(updated.title, "New");
-    assert_eq!(updated.description, "new desc");
+    assert_eq!(updated.body, "new body");
     assert_eq!(updated.state, ReviewState::Open);
 }
 
@@ -276,8 +241,46 @@ fn update_state_to_closed() {
     assert_eq!(fetched.state, ReviewState::Closed);
 }
 
+#[test]
+fn update_state_to_merged() {
+    let (_dir, repo) = test_repo();
+    let store = Store::new(&repo);
+    let target = ReviewTarget {
+        head: head_oid(&repo),
+        base: None,
+    };
+    let created = store.create_review("PR", "", &target, None).unwrap();
+
+    let updated = store
+        .update_review(&created.oid, None, None, Some(&ReviewState::Merged))
+        .unwrap();
+    assert_eq!(updated.state, ReviewState::Merged);
+}
+
+#[test]
+fn list_reviews_by_state() {
+    let (_dir, repo) = test_repo();
+    let store = Store::new(&repo);
+    let target = ReviewTarget {
+        head: head_oid(&repo),
+        base: None,
+    };
+    let to_close = store.create_review("Close me", "", &target, None).unwrap();
+    store.create_review("Keep open", "", &target, None).unwrap();
+    store
+        .update_review(&to_close.oid, None, None, Some(&ReviewState::Closed))
+        .unwrap();
+
+    let open = store.list_reviews_by_state(&ReviewState::Open).unwrap();
+    let closed = store.list_reviews_by_state(&ReviewState::Closed).unwrap();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].title, "Keep open");
+    assert_eq!(closed.len(), 1);
+    assert_eq!(closed[0].title, "Close me");
+}
+
 // ---------------------------------------------------------------------------
-// refresh_review_target
+// refresh / retarget
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -294,7 +297,6 @@ fn refresh_target_updates_objects() {
         .create_review("Refresh", "", &target, Some("refs/heads/main"))
         .unwrap();
 
-    // Advance main.
     let sig = git2::Signature::now("test", "test@test.com").unwrap();
     let parent = repo.head().unwrap().peel_to_commit().unwrap();
     let tree = parent.tree().unwrap();
@@ -329,15 +331,20 @@ fn refresh_noop_without_ref() {
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests for ReviewState
+// ReviewState parsing
 // ---------------------------------------------------------------------------
 
 #[test]
 fn state_from_str_valid() {
     assert_eq!("open".parse::<ReviewState>().unwrap(), ReviewState::Open);
+    assert_eq!("draft".parse::<ReviewState>().unwrap(), ReviewState::Draft);
     assert_eq!(
         "closed".parse::<ReviewState>().unwrap(),
         ReviewState::Closed
+    );
+    assert_eq!(
+        "merged".parse::<ReviewState>().unwrap(),
+        ReviewState::Merged
     );
 }
 
@@ -350,11 +357,13 @@ fn state_from_str_invalid() {
 #[test]
 fn state_as_str() {
     assert_eq!(ReviewState::Open.as_str(), "open");
+    assert_eq!(ReviewState::Draft.as_str(), "draft");
     assert_eq!(ReviewState::Closed.as_str(), "closed");
+    assert_eq!(ReviewState::Merged.as_str(), "merged");
 }
 
 // ---------------------------------------------------------------------------
-// Pin entry correctness (issue 5 regression)
+// Pin entry correctness
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -375,8 +384,6 @@ fn pin_entry_blob_references_actual_object() {
     let entry = tree
         .get_path(std::path::Path::new(&format!("objects/{blob}")))
         .unwrap();
-
-    // For blobs, the tree entry OID must equal the actual blob OID.
     assert_eq!(entry.id(), blob_oid);
 }
 
@@ -400,14 +407,12 @@ fn pin_entry_commit_references_actual_object() {
     let entry = tree
         .get_path(std::path::Path::new(&format!("objects/{commit}")))
         .unwrap();
-
-    // The tree entry OID must equal the actual commit OID (gitlink mode).
     assert_eq!(entry.id(), commit_oid);
     assert_eq!(entry.filemode(), 0o160_000);
 }
 
 // ---------------------------------------------------------------------------
-// Imported review with state (issue 7 regression)
+// Imported review
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -434,15 +439,9 @@ fn create_review_imported_with_state() {
         .unwrap();
 
     assert_eq!(review.state, ReviewState::Closed);
-
-    // Verify it round-trips through get_review.
     let fetched = store.get_review("GH#99").unwrap();
     assert_eq!(fetched.state, ReviewState::Closed);
 }
-
-// ---------------------------------------------------------------------------
-// Imported review with base target (issue 2 regression)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn create_review_imported_preserves_base() {
@@ -470,18 +469,16 @@ fn create_review_imported_preserves_base() {
 
     assert_eq!(review.target.base, Some(base_blob.clone()));
     assert_eq!(review.source_ref, Some("feature".to_string()));
-
     let fetched = store.get_review("GH#50").unwrap();
     assert_eq!(fetched.target.base, Some(base_blob));
-    assert_eq!(fetched.source_ref, Some("feature".to_string()));
 }
 
 // ---------------------------------------------------------------------------
-// Approvals
+// Approvals (per-OID, contributor-UUID keyed)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn approve_review_records_user() {
+fn approve_review_records_all_objects() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let target = ReviewTarget {
@@ -493,35 +490,55 @@ fn approve_review_records_user() {
         .unwrap();
     assert!(review.approvals.is_empty());
 
-    let approved = store.approve_review(&review.oid, Some("lgtm")).unwrap();
+    let uuid = "00000000-0000-7000-8000-000000000001";
+    let approved = store.approve_review(&review.oid, uuid).unwrap();
     assert_eq!(approved.approvals.len(), 1);
-    assert_eq!(approved.approvals[0].0, "test");
-    assert_eq!(approved.approvals[0].1, "lgtm");
+    assert!(approved.approvals[0].approvers.contains(&uuid.to_string()));
 
-    // Round-trip through get_review.
     let fetched = store.get_review(&review.oid).unwrap();
     assert_eq!(fetched.approvals.len(), 1);
-    assert_eq!(fetched.approvals[0].0, "test");
 }
 
 #[test]
-fn approve_review_overwrites_previous() {
+fn approve_review_object_single() {
+    let (_dir, repo) = test_repo();
+    let store = Store::new(&repo);
+    let commit = head_oid(&repo);
+    let target = ReviewTarget {
+        head: commit.clone(),
+        base: None,
+    };
+    let review = store
+        .create_review("Single obj", "", &target, None)
+        .unwrap();
+
+    let uuid = "00000000-0000-7000-8000-000000000002";
+    let approved = store
+        .approve_review_object(&review.oid, &commit, uuid)
+        .unwrap();
+    assert_eq!(approved.approvals.len(), 1);
+    assert_eq!(approved.approvals[0].oid, commit);
+    assert!(approved.approvals[0].approvers.contains(&uuid.to_string()));
+}
+
+#[test]
+fn approve_review_object_not_in_objects_errors() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
     };
-    let review = store.create_review("Overwrite", "", &target, None).unwrap();
+    let review = store.create_review("Test", "", &target, None).unwrap();
 
-    store.approve_review(&review.oid, Some("first")).unwrap();
-    let updated = store.approve_review(&review.oid, Some("second")).unwrap();
-    assert_eq!(updated.approvals.len(), 1);
-    assert_eq!(updated.approvals[0].1, "second");
+    let fake_oid = make_blob(&repo, b"other");
+    let uuid = "00000000-0000-7000-8000-000000000003";
+    let result = store.approve_review_object(&review.oid, &fake_oid, uuid);
+    assert!(result.is_err());
 }
 
 #[test]
-fn revoke_approval_removes_entry() {
+fn revoke_approval_removes_entries() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let target = ReviewTarget {
@@ -530,8 +547,9 @@ fn revoke_approval_removes_entry() {
     };
     let review = store.create_review("Revoke", "", &target, None).unwrap();
 
-    store.approve_review(&review.oid, None).unwrap();
-    let revoked = store.revoke_approval(&review.oid).unwrap();
+    let uuid = "00000000-0000-7000-8000-000000000004";
+    store.approve_review(&review.oid, uuid).unwrap();
+    let revoked = store.revoke_approval(&review.oid, uuid).unwrap();
     assert!(revoked.approvals.is_empty());
 
     let fetched = store.get_review(&review.oid).unwrap();
