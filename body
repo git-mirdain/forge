@@ -1,0 +1,1 @@
+In `crates/forge-mcp/src/issue.rs` L106–119 and L150–177, the pattern `.as_deref().unwrap_or(&[]).iter().map(String::as_str).collect::<Vec<&str>>()` is repeated four times (labels and assignees for `create_issue` and `update_issue`). Extract a `fn str_slice(v: Option<&[String]>) -> Vec<&str>` helper.\n\nGenerated-by: Claude Code (Claude Sonnet 4.6)

@@ -1,0 +1,1 @@
+Option<Vec<String>> → Vec<&str> conversion duplicated four times in forge-mcp issue handler
