@@ -1,0 +1,1 @@
+Hard-coded SHA-1 OID length (40) breaks SHA-256 repos

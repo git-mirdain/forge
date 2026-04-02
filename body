@@ -1,0 +1,8 @@
+Several call sites assume OIDs are exactly 40 hex characters (SHA-1). In a SHA-256 repository, OIDs are 64 characters, so these checks silently fail.
+
+Locations:
+- `index.rs`: `resolve_oid` gates on `val.len() == 40` and `oid_or_id.len() == 40`
+- `comment.rs:301`: `resolve_thread_oid` fast-paths on `prefix.len() == 40`
+- `exe.rs`: `resolve_oid_or_ref` and `resolve_ref_or_oid` check `spec.len() == 40`
+
+Fix: replace the hard-coded 40 with `git2::Oid::zero().as_bytes().len() * 2` or a shared constant derived from the repo's OID type.
