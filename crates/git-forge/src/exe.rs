@@ -2083,6 +2083,176 @@ impl Executor {
                     print_issue(&issue, cli.json);
                 }
             },
+
+            #[cfg(feature = "server")]
+            Command::Server { command } => {
+                use crate::cli::ServerCommand;
+                match command {
+                    ServerCommand::Start {
+                        poll_interval,
+                        remote,
+                        no_sync_refs,
+                        once,
+                        foreground,
+                    } => {
+                        self.server_start(
+                            *poll_interval,
+                            remote,
+                            *no_sync_refs,
+                            *once,
+                            *foreground,
+                        )?;
+                    }
+                    ServerCommand::Stop => {
+                        self.server_stop()?;
+                    }
+                    ServerCommand::Status => {
+                        self.server_status()?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "server")]
+impl Executor {
+    fn pidfile_path(&self) -> std::path::PathBuf {
+        self.repo.path().join("forge-server.pid")
+    }
+
+    fn read_pid(&self) -> Result<Option<u32>> {
+        let path = self.pidfile_path();
+        match std::fs::read_to_string(&path) {
+            Ok(s) => {
+                let pid: u32 = s.trim().parse().map_err(|_| {
+                    crate::Error::Sync(format!("invalid pid in {}", path.display()))
+                })?;
+                Ok(Some(pid))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn is_process_alive(pid: u32) -> bool {
+        // `kill -0` checks if process exists without sending a signal.
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    fn server_start(
+        &self,
+        poll_interval: u64,
+        remote: &str,
+        no_sync_refs: bool,
+        once: bool,
+        foreground: bool,
+    ) -> Result<()> {
+        // Check for already-running daemon.
+        if let Some(pid) = self.read_pid()? {
+            if Self::is_process_alive(pid) {
+                eprintln!("forge-server already running (pid {pid})");
+                return Ok(());
+            }
+            // Stale pidfile — remove it.
+            let _ = std::fs::remove_file(self.pidfile_path());
+        }
+
+        if !once && !foreground && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            let confirm = inquire::Confirm::new("Start forge sync daemon in the background?")
+                .with_default(true)
+                .prompt()
+                .map_err(|e| crate::Error::Sync(e.to_string()))?;
+            if !confirm {
+                return Ok(());
+            }
+        }
+
+        let repo_path = self
+            .repo
+            .workdir()
+            .or_else(|| self.repo.path().parent())
+            .unwrap_or(self.repo.path());
+
+        let mut cmd = std::process::Command::new("forge-server");
+        cmd.arg("--repo").arg(repo_path);
+        cmd.arg("--poll-interval").arg(poll_interval.to_string());
+        cmd.arg("--remote").arg(remote);
+        if no_sync_refs {
+            cmd.arg("--no-sync-refs");
+        }
+        if once {
+            cmd.arg("--once");
+        }
+
+        if once || foreground {
+            // Run in foreground — exec and wait.
+            let status = cmd
+                .status()
+                .map_err(|e| crate::Error::Sync(format!("failed to start forge-server: {e}")))?;
+            if !status.success() {
+                return Err(crate::Error::Sync(format!(
+                    "forge-server exited with {status}"
+                )));
+            }
+        } else {
+            // Spawn detached background process.
+            cmd.stdin(std::process::Stdio::null());
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+
+            let child = cmd
+                .spawn()
+                .map_err(|e| crate::Error::Sync(format!("failed to start forge-server: {e}")))?;
+
+            let pid = child.id();
+            std::fs::write(self.pidfile_path(), format!("{pid}\n"))
+                .map_err(|e| crate::Error::Sync(format!("failed to write pidfile: {e}")))?;
+            eprintln!("forge-server started (pid {pid})");
+        }
+
+        Ok(())
+    }
+
+    fn server_stop(&self) -> Result<()> {
+        let Some(pid) = self.read_pid()? else {
+            eprintln!("forge-server is not running");
+            return Ok(());
+        };
+
+        if !Self::is_process_alive(pid) {
+            let _ = std::fs::remove_file(self.pidfile_path());
+            eprintln!("forge-server is not running (stale pidfile removed)");
+            return Ok(());
+        }
+
+        let _ = std::process::Command::new("kill")
+            .args([&pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let _ = std::fs::remove_file(self.pidfile_path());
+        eprintln!("forge-server stopped (pid {pid})");
+        Ok(())
+    }
+
+    fn server_status(&self) -> Result<()> {
+        let Some(pid) = self.read_pid()? else {
+            eprintln!("forge-server is not running");
+            return Ok(());
+        };
+
+        if Self::is_process_alive(pid) {
+            eprintln!("forge-server is running (pid {pid})");
+        } else {
+            let _ = std::fs::remove_file(self.pidfile_path());
+            eprintln!("forge-server is not running (stale pidfile removed)");
         }
         Ok(())
     }

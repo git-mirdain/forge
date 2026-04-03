@@ -19,31 +19,21 @@ Keep `main.rs` as a thin wrapper so the standalone binary still works.
 - `forge-server/src/main.rs` — parses clap args, builds `ServerConfig`,
   calls `forge_server::run()`
 
-### 2. Add `daemonix` to workspace
+### 2. Add `server` feature to git-forge
 
-`daemonix` is a maintained fork of the `daemonize` crate.
-It handles fork, pidfile, and stdio redirect.
+The `server` feature gates the `forge server` subcommand.
+No new crate dependencies — `git-forge` cannot depend on `forge-server` or `forge-github` because both already depend on `git-forge` (cyclic).
 
-- Add `daemonix` to `[workspace.dependencies]` in root `Cargo.toml`
-- Add `daemonix` as optional dep to `git-forge`
-
-### 3. Add `server` feature to git-forge
+Instead, `forge server start` spawns `forge-server` as a detached child process and manages it via a pidfile at `.git/forge-server.pid`.
 
 ```toml
-server = ["cli", "dep:forge-server", "dep:forge-github", "dep:tokio", "dep:daemonix"]
+server = ["cli"]
 default = ["cli", "exe", "server"]
 ```
 
-### 4. Add `ServerCommand` to CLI
+### 3. Add `ServerCommand` to CLI
 
 Behind `#[cfg(feature = "server")]`:
-
-```rust
-Server {
-    #[command(subcommand)]
-    command: ServerCommand,
-}
-```
 
 ```rust
 enum ServerCommand {
@@ -59,28 +49,22 @@ enum ServerCommand {
 }
 ```
 
-### 5. Implement in executor
+### 4. Implement in executor
 
 Behind `#[cfg(feature = "server")]`:
 
 - **start**: prompt "Start forge sync daemon?" (unless `--foreground` or
-  `--once`), write pidfile to `.git/forge-server.pid`, daemonize (unless
-  foreground/once), init tokio runtime, call `forge_server::run()`
-- **stop**: read pidfile, send SIGTERM, remove pidfile
-- **status**: read pidfile, check if process alive, print status
+  `--once`), spawn `forge-server` as a detached subprocess, write pid to
+  `.git/forge-server.pid`
+- **stop**: read pidfile, send SIGTERM via `kill`, remove pidfile
+- **status**: read pidfile, check if process alive via `kill -0`
 
 ### Files touched
 
 | File | Change |
 |------|--------|
-| `Cargo.toml` (workspace) | Add `daemonix` workspace dep |
 | `crates/forge-server/src/lib.rs` | **New** — extract sync logic |
 | `crates/forge-server/src/main.rs` | Thin wrapper calling lib |
-| `crates/git-forge/Cargo.toml` | Add `server` feature + optional deps |
+| `crates/git-forge/Cargo.toml` | Add `server` feature |
 | `crates/git-forge/src/cli.rs` | Add `ServerCommand` |
 | `crates/git-forge/src/exe.rs` | Add server dispatch |
-
-### Commit plan
-
-1. **refactor: extract forge-server sync logic into library** — lib.rs + thin main.rs
-2. **feat: add `forge server` subcommand with daemonize support** — daemonix dep, feature flag, CLI, executor

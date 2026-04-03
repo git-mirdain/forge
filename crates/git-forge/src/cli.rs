@@ -60,6 +60,45 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Manage the sync daemon.
+    #[cfg(feature = "server")]
+    Server {
+        /// Server subcommand.
+        #[command(subcommand)]
+        command: ServerCommand,
+    },
+}
+
+/// Server subcommands.
+#[cfg(feature = "server")]
+#[derive(Subcommand, Debug)]
+pub enum ServerCommand {
+    /// Start the sync daemon.
+    Start {
+        /// Seconds between sync polls.
+        #[arg(long, default_value_t = 60u64)]
+        poll_interval: u64,
+
+        /// Git remote for pushing/pulling forge refs.
+        #[arg(long, default_value = "origin")]
+        remote: String,
+
+        /// Disable fetching/pushing forge refs to the remote.
+        #[arg(long)]
+        no_sync_refs: bool,
+
+        /// Run a single sync pass and exit (foreground).
+        #[arg(long)]
+        once: bool,
+
+        /// Run in the foreground instead of daemonizing.
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// Stop the running sync daemon.
+    Stop,
+    /// Show the status of the sync daemon.
+    Status,
 }
 
 /// Config subcommands.

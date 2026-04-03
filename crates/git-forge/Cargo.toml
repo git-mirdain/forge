@@ -13,9 +13,10 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
-default = ["cli", "exe"]
+default = ["cli", "exe", "server"]
 exe = ["dep:facet-json"]
 cli = ["exe", "dep:clap", "dep:inquire", "dep:comfy-table"]
+server = ["cli"]
 
 [dependencies]
 thiserror = { workspace = true }
