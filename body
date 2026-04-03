@@ -1,0 +1,5 @@
+**`repo_root()` returns the parent of `.git/` — incorrect for bare repos and worktrees.**
+
+`repo.path()` returns the `.git` directory. For a normal repo, `.parent()` gives the worktree root. But for bare repositories, `repo.path()` is the repo root itself, and `.parent()` goes one level too high. For linked worktrees, `repo.path()` points into `.git/worktrees/<name>/`, and `.parent()` gives `.git/worktrees/`, not the worktree root.
+
+`repo_root()` is used to construct `DRAFTS_DIR` paths. In a worktree setup, drafts would be written to the wrong location. Use `repo.workdir()` instead (which is already available via `self.workdir()`).
