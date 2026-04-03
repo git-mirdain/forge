@@ -1,0 +1,5 @@
+**`resolve_blob_path` walks the entire commit tree to find a single blob — O(n) per comment**
+
+For each review comment with an anchor, this function walks every file in the commit tree to find a blob OID match. With a large repo (e.g., Linux kernel), this could enumerate hundreds of thousands of files per comment. If a review has 50 comments, that is 50 full tree walks.
+
+Additionally, if two files in the tree have identical content (same blob OID), `find` returns the first one found, which may not be the correct file. Git trees can contain multiple paths pointing to the same blob.
