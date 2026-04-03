@@ -620,6 +620,8 @@ impl Executor {
                     sigil,
                 )?;
             }
+            // Default sync scope: issues only.
+            crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sync/issues"), "true")?;
             added.push(ConfigEntry {
                 provider,
                 owner,
@@ -640,6 +642,8 @@ impl Executor {
         for (entity, sigil) in &sigils {
             crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sigil/{entity}"), sigil)?;
         }
+        // Default sync scope: issues only.
+        crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sync/issues"), "true")?;
         Ok(())
     }
 

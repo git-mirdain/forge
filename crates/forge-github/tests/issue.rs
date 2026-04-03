@@ -191,6 +191,7 @@ pub fn test_config() -> GitHubSyncConfig {
         repo: "test-repo".into(),
         sigils: BTreeMap::new(),
         token: None,
+        sync: vec![],
     }
 }
 

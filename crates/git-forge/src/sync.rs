@@ -36,6 +36,18 @@ pub trait RemoteSync {
         repo: &Repository,
     ) -> impl std::future::Future<Output = Result<SyncReport>>;
 
+    /// Import reviews from the remote into the local forge store.
+    fn import_reviews(
+        &self,
+        repo: &Repository,
+    ) -> impl std::future::Future<Output = Result<SyncReport>>;
+
+    /// Export locally-created reviews to the remote.
+    fn export_reviews(
+        &self,
+        repo: &Repository,
+    ) -> impl std::future::Future<Output = Result<SyncReport>>;
+
     /// Import all entities (issues + reviews + comments) from the remote.
     fn import_all(
         &self,

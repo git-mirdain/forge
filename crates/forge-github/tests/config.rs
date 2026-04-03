@@ -2,7 +2,7 @@
 #![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
 
 use forge_github::config::{
-    GitHubSyncConfig, discover_github_configs, read_github_config, write_github_config,
+    GitHubSyncConfig, SyncScope, discover_github_configs, read_github_config, write_github_config,
 };
 use git2::Repository;
 use tempfile::TempDir;
@@ -36,6 +36,7 @@ fn config_with_sigils(owner: &str, repo_name: &str, sigils: &[(&str, &str)]) -> 
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
         token: None,
+        sync: vec![],
     }
 }
 
@@ -189,4 +190,31 @@ fn discover_config_sigils_are_correct_per_repo() {
             cfg.repo
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// sync scope round-trip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn write_then_read_sync_scopes() {
+    let (_dir, repo) = test_repo();
+    let mut cfg = config_with_sigils("org", "repo", &[]);
+    cfg.sync = vec![SyncScope::Issues, SyncScope::Reviews];
+    write_github_config(&repo, &cfg).unwrap();
+
+    let loaded = read_github_config(&repo, "org", "repo").unwrap();
+    assert_eq!(loaded.sync, vec![SyncScope::Issues, SyncScope::Reviews]);
+}
+
+#[test]
+fn sync_scope_defaults_to_issues_when_absent() {
+    let (_dir, repo) = test_repo();
+    // Write config without sync scope (empty vec → no sync subtree entries).
+    let cfg = config_with_sigils("org", "repo", &[("issue", "GH#")]);
+    write_github_config(&repo, &cfg).unwrap();
+
+    let loaded = read_github_config(&repo, "org", "repo").unwrap();
+    // Empty sync subtree should default to [Issues].
+    assert_eq!(loaded.sync, vec![SyncScope::Issues]);
 }

@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use forge_github::GitHubAdapter;
-use forge_github::config::discover_github_configs;
+use forge_github::config::{SyncScope, discover_github_configs};
 use git_forge::comment::rebuild_comments_index;
 use git_forge::sync::RemoteSync;
 use git2::Repository;
@@ -66,18 +66,43 @@ async fn run(repo: &Repository, adapters: &[GitHubAdapter], args: &Args) -> Resu
 async fn sync_one(repo: &Repository, adapter: &GitHubAdapter) -> Result<()> {
     let cfg = &adapter.config;
     let label = format!("{}/{}", cfg.owner, cfg.repo);
+    let sync_issues = cfg.sync.contains(&SyncScope::Issues);
+    let sync_reviews = cfg.sync.contains(&SyncScope::Reviews);
 
-    let import = adapter.import_all(repo).await?;
-    eprintln!(
-        "forge-server: import {label}: imported={} skipped={} failed={}",
-        import.imported, import.skipped, import.failed,
-    );
-
-    let export = adapter.export_all(repo).await?;
-    eprintln!(
-        "forge-server: export {label}: exported={} skipped={} failed={} unexportable={}",
-        export.exported, export.skipped, export.failed, export.unexportable,
-    );
+    if sync_issues && sync_reviews {
+        let import = adapter.import_all(repo).await?;
+        eprintln!(
+            "forge-server: import {label}: imported={} skipped={} failed={}",
+            import.imported, import.skipped, import.failed,
+        );
+        let export = adapter.export_all(repo).await?;
+        eprintln!(
+            "forge-server: export {label}: exported={} skipped={} failed={} unexportable={}",
+            export.exported, export.skipped, export.failed, export.unexportable,
+        );
+    } else if sync_issues {
+        let import = adapter.import_issues(repo).await?;
+        eprintln!(
+            "forge-server: import issues {label}: imported={} skipped={} failed={}",
+            import.imported, import.skipped, import.failed,
+        );
+        let export = adapter.export_issues(repo).await?;
+        eprintln!(
+            "forge-server: export issues {label}: exported={} skipped={} failed={} unexportable={}",
+            export.exported, export.skipped, export.failed, export.unexportable,
+        );
+    } else if sync_reviews {
+        let import = adapter.import_reviews(repo).await?;
+        eprintln!(
+            "forge-server: import reviews {label}: imported={} skipped={} failed={}",
+            import.imported, import.skipped, import.failed,
+        );
+        let export = adapter.export_reviews(repo).await?;
+        eprintln!(
+            "forge-server: export reviews {label}: exported={} skipped={} failed={} unexportable={}",
+            export.exported, export.skipped, export.failed, export.unexportable,
+        );
+    }
 
     Ok(())
 }
