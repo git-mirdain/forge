@@ -672,6 +672,64 @@ impl Executor {
     }
 }
 
+/// Detect and launch an editor for the given path.
+///
+/// Detection order: `$FORGE_EDITOR`, `$VISUAL`, `$EDITOR`, then probe for
+/// `zed`, `code`, `nvim`, `vim` in `$PATH`.  GUI editors (`zed`, `code`)
+/// are spawned and detached; TUI editors (`nvim`, `vim`) run in the
+/// foreground.
+fn launch_editor(path: &std::path::Path) -> Result<()> {
+    let gui_editors = ["zed", "code"];
+    let tui_editors = ["nvim", "vim"];
+
+    let editor = std::env::var("FORGE_EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .or_else(|_| std::env::var("EDITOR"))
+        .ok()
+        .or_else(|| {
+            gui_editors
+                .iter()
+                .chain(tui_editors.iter())
+                .find(|name| which(name))
+                .map(|s| (*s).to_string())
+        });
+
+    let Some(editor) = editor else {
+        return Ok(());
+    };
+
+    let name = std::path::Path::new(&editor)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&editor);
+
+    let is_gui = gui_editors.iter().any(|g| name.contains(g));
+
+    if is_gui {
+        std::process::Command::new(&editor)
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| Error::Config(format!("failed to launch {editor}: {e}")))?;
+    } else {
+        let status = std::process::Command::new(&editor)
+            .arg(path)
+            .status()
+            .map_err(|e| Error::Config(format!("failed to launch {editor}: {e}")))?;
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(1));
+        }
+    }
+    Ok(())
+}
+
+fn which(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(name).is_file()))
+}
+
 fn parse_remote_url(url: &str) -> Result<(String, String, String)> {
     // SSH: git@github.com:owner/repo.git
     if let Some(rest) = url.strip_prefix("git@") {
@@ -1564,7 +1622,11 @@ impl Executor {
                     }
                 }
 
-                ReviewCommand::Start { reference, path } => {
+                ReviewCommand::Start {
+                    reference,
+                    path,
+                    no_editor,
+                } => {
                     let (review, wt_path) = self.checkout_review(reference, path.as_deref())?;
                     if cli.json {
                         print_review(&review, true);
@@ -1574,14 +1636,8 @@ impl Executor {
                             .as_deref()
                             .unwrap_or(&review.oid[..review.oid.len().min(12)]);
                         println!("Checked out review {label} to {}", wt_path.display());
-                        if std::io::stdin().is_terminal() {
-                            let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
-                            let status = std::process::Command::new(&shell)
-                                .current_dir(&wt_path)
-                                .status()?;
-                            if !status.success() {
-                                std::process::exit(status.code().unwrap_or(1));
-                            }
+                        if !no_editor {
+                            launch_editor(&wt_path)?;
                         }
                     }
                 }

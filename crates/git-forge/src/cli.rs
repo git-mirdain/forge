@@ -426,6 +426,10 @@ pub enum ReviewCommand {
 
         /// Worktree path (default: ../<repo>@<reference>).
         path: Option<PathBuf>,
+
+        /// Skip launching the editor; just print the worktree path.
+        #[arg(long)]
+        no_editor: bool,
     },
 
     /// Finish a review session: remove the worktree.
