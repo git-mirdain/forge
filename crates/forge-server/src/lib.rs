@@ -34,7 +34,6 @@ pub const SYNC_REF_PREFIXES: &[&str] = &[
     "refs/forge/comments/*:refs/forge/comments/*",
     "refs/forge/contributors/*:refs/forge/contributors/*",
     "refs/forge/index/*:refs/forge/index/*",
-    "refs/forge/sync/*:refs/forge/sync/*",
 ];
 
 /// Discover GitHub adapters from the repository's forge config.
@@ -60,18 +59,14 @@ pub fn discover_adapters(repo: &Repository) -> Result<Vec<GitHubAdapter>> {
 /// encounters an unrecoverable error.
 pub fn run(repo: &Repository, config: &ServerConfig) -> Result<()> {
     let _pid_guard = pidfile::PidGuard::acquire(repo.path())?;
-    let adapters = discover_adapters(repo)?;
+    // `git2::Repository` is `!Sync`, so a multi-threaded runtime would be unsound.
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(run_loop(repo, &adapters, config))
+        .block_on(run_loop(repo, config))
 }
 
-async fn run_loop(
-    repo: &Repository,
-    adapters: &[GitHubAdapter],
-    config: &ServerConfig,
-) -> Result<()> {
+async fn run_loop(repo: &Repository, config: &ServerConfig) -> Result<()> {
     let repo_path = repo
         .workdir()
         .or_else(|| repo.path().parent())
@@ -80,10 +75,24 @@ async fn run_loop(
     loop {
         if !config.no_sync_refs {
             fetch_forge_refs(repo_path, &config.remote);
+            // TODO: the libgit2 `Repository` handle may cache ref state; freshly
+            // fetched refs are visible because we fetch via the `git` CLI, but
+            // in-process caches (e.g. packfile index) could theoretically go stale.
         }
 
-        for adapter in adapters {
-            sync_one(repo, adapter).await?;
+        let adapters = match discover_adapters(repo) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("forge-server: adapter discovery failed: {e:#}");
+                Vec::new()
+            }
+        };
+
+        for adapter in &adapters {
+            let label = format!("{}/{}", adapter.config.owner, adapter.config.repo);
+            if let Err(e) = sync_one(repo, adapter).await {
+                eprintln!("forge-server: sync failed for {label}: {e:#}");
+            }
         }
 
         if let Err(e) = rebuild_comments_index(repo) {
@@ -98,7 +107,13 @@ async fn run_loop(
             return Ok(());
         }
 
-        tokio::time::sleep(Duration::from_secs(config.poll_interval)).await;
+        tokio::select! {
+            () = tokio::time::sleep(Duration::from_secs(config.poll_interval)) => {}
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("forge-server: received SIGINT, shutting down");
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -113,10 +128,10 @@ pub fn fetch_forge_refs(repo_path: &Path, remote: &str) {
             Ok(output) if output.status.success() => {}
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("forge-server: fetch {refspec} failed: {stderr}");
+                eprintln!("forge-server: fetch {refspec} failed (refs may be stale): {stderr}");
             }
             Err(e) => {
-                eprintln!("forge-server: fetch {refspec} failed: {e}");
+                eprintln!("forge-server: fetch {refspec} failed (refs may be stale): {e}");
             }
         }
     }
