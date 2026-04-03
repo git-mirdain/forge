@@ -1,0 +1,5 @@
+**`lookup_by_forge_oid` is O(n) linear scan — becomes a bottleneck at scale**
+
+This function is called once per issue/review in the export path (line 65 of export.rs, line 207), and once per comment. For a repository with thousands of issues and tens of thousands of comments, the state map could be large and every export iteration scans the entire map.
+
+More critically, `HashMap` iteration order is non-deterministic. If there are duplicate values in the map (two GitHub numbers mapping to the same forge OID — which can happen if an issue is deleted and re-created), `find_map` will return an arbitrary match. This could cause the export to target the wrong GitHub issue number.
