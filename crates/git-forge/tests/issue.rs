@@ -277,6 +277,7 @@ fn list_by_state_filters_correctly() {
             &[],
             &[],
             &[],
+            None,
         )
         .unwrap();
 
@@ -325,6 +326,7 @@ fn update_issue_title() {
             &[],
             &[],
             &[],
+            None,
         )
         .unwrap();
 
@@ -348,6 +350,7 @@ fn update_issue_body() {
             &[],
             &[],
             &[],
+            None,
         )
         .unwrap();
 
@@ -372,6 +375,7 @@ fn update_issue_state_open_to_closed() {
             &[],
             &[],
             &[],
+            None,
         )
         .unwrap();
     assert_eq!(updated.state, IssueState::Closed);
@@ -399,6 +403,7 @@ fn update_issue_add_label() {
             &[],
             &[],
             &[],
+            None,
         )
         .unwrap();
 
@@ -425,6 +430,7 @@ fn update_issue_remove_label() {
             &["remove-me"],
             &[],
             &[],
+            None,
         )
         .unwrap();
 
@@ -439,7 +445,17 @@ fn update_issue_remove_nonexistent_label_is_ok() {
 
     // Removing a label that was never there should not error.
     let updated = store
-        .update_issue(&created.oid, None, None, None, &[], &["phantom"], &[], &[])
+        .update_issue(
+            &created.oid,
+            None,
+            None,
+            None,
+            &[],
+            &["phantom"],
+            &[],
+            &[],
+            None,
+        )
         .unwrap();
 
     assert_eq!(updated.labels, vec!["bug"]);
@@ -463,6 +479,7 @@ fn update_issue_add_and_remove_assignees() {
             &[],
             &["carol"],
             &["bob"],
+            None,
         )
         .unwrap();
 
@@ -489,6 +506,7 @@ fn update_issue_all_mutations_at_once() {
             &["bug"],
             &["bob"],
             &["alice"],
+            None,
         )
         .unwrap();
 
@@ -505,7 +523,17 @@ fn update_issue_not_found() {
     let store = Store::new(&repo);
 
     let err = store
-        .update_issue("nonexistent", Some("title"), None, None, &[], &[], &[], &[])
+        .update_issue(
+            "nonexistent",
+            Some("title"),
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+        )
         .unwrap_err();
     assert!(matches!(err, Error::NotFound(_)));
 }
@@ -520,7 +548,7 @@ fn update_issue_no_op_mutation_preserves_fields() {
 
     // All Nones and empty slices — should be a no-op.
     let updated = store
-        .update_issue(&created.oid, None, None, None, &[], &[], &[], &[])
+        .update_issue(&created.oid, None, None, None, &[], &[], &[], &[], None)
         .unwrap();
 
     assert_eq!(updated.title, "Title");

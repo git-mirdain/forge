@@ -56,6 +56,8 @@ struct UpdateIssueParams {
     add_assignees: Option<Vec<String>>,
     /// Contributor UUIDs to unassign.
     remove_assignees: Option<Vec<String>>,
+    /// Source URL (e.g. upstream issue URL).
+    source_url: Option<String>,
 }
 
 #[tool_router(router = issue_router, vis = "pub(crate)")]
@@ -184,6 +186,7 @@ impl ForgeMcpServer {
             &remove_labels,
             &add_assignees,
             &remove_assignees,
+            params.source_url.as_deref(),
         ) {
             Ok(issue) => facet_json::to_string_pretty(&issue).expect("serialize"),
             Err(e) => format!("error: {e}"),
@@ -259,6 +262,7 @@ mod tests {
             remove_labels: None,
             add_assignees: None,
             remove_assignees: None,
+            source_url: None,
         }));
         assert!(!updated.starts_with("error:"), "update failed: {updated}");
         assert!(updated.contains("Closed"));
@@ -286,6 +290,7 @@ mod tests {
             remove_labels: None,
             add_assignees: None,
             remove_assignees: None,
+            source_url: None,
         }));
         assert!(result.starts_with("error:"));
     }

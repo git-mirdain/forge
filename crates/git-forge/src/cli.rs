@@ -615,6 +615,10 @@ pub enum IssueCommand {
         #[arg(long = "remove-assignee")]
         remove_assignees: Vec<String>,
 
+        /// Set the source URL (e.g. the upstream issue URL).
+        #[arg(long)]
+        source_url: Option<String>,
+
         /// Prompt for title, body, and state interactively.
         #[arg(long, short = 'i')]
         interactive: bool,

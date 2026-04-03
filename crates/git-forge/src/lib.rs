@@ -25,6 +25,7 @@ pub(crate) mod reindex;
 
 pub use error::{Error, Result};
 
+use git_ledger::{Ledger, Mutation};
 use git2::Repository;
 
 /// A handle to the forge store in a Git repository.
@@ -47,6 +48,22 @@ impl<'a> Store<'a> {
     /// Returns an error if a git operation fails.
     pub fn write_display_id(&self, index_ref: &str, display_id: &str, oid: &str) -> Result<()> {
         index::index_upsert(self.repo, index_ref, &[(display_id, oid)])
+    }
+
+    /// Write a `source/url` field to an existing ledger entry.
+    ///
+    /// `ref_prefix` is e.g. [`refs::ISSUE_PREFIX`] or [`refs::REVIEW_PREFIX`].
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
+    pub fn write_source_url(&self, ref_prefix: &str, oid: &str, url: &str) -> Result<()> {
+        let ref_name = format!("{ref_prefix}{oid}");
+        self.repo.update(
+            &ref_name,
+            &[Mutation::Set("source/url", url.as_bytes())],
+            "forge: set source url",
+        )?;
+        Ok(())
     }
 }
 

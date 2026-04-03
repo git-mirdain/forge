@@ -109,6 +109,7 @@ impl Executor {
         remove_labels: &[&str],
         add_assignees: &[&str],
         remove_assignees: &[&str],
+        source_url: Option<&str>,
     ) -> Result<Issue> {
         self.store().update_issue(
             reference,
@@ -119,6 +120,7 @@ impl Executor {
             remove_labels,
             add_assignees,
             remove_assignees,
+            source_url,
         )
     }
     // -----------------------------------------------------------------------
@@ -2016,6 +2018,7 @@ impl Executor {
                     remove_labels,
                     add_assignees,
                     remove_assignees,
+                    source_url,
                     interactive,
                 } => {
                     let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
@@ -2025,7 +2028,8 @@ impl Executor {
                         && add_labels.is_empty()
                         && remove_labels.is_empty()
                         && add_assignees.is_empty()
-                        && remove_assignees.is_empty();
+                        && remove_assignees.is_empty()
+                        && source_url.is_none();
                     let interactive = *interactive || should_interact(no_fields);
                     let (eff_title, eff_body, eff_state): (
                         Option<String>,
@@ -2058,6 +2062,7 @@ impl Executor {
                         &remove_labels,
                         &add_assignees,
                         &remove_assignees,
+                        source_url.as_deref(),
                     )?;
                     print_issue(&issue, cli.json);
                 }
@@ -2072,6 +2077,7 @@ impl Executor {
                         &[],
                         &[],
                         &[],
+                        None,
                     )?;
                     print_issue(&issue, cli.json);
                 }
@@ -2086,6 +2092,7 @@ impl Executor {
                         &[],
                         &[],
                         &[],
+                        None,
                     )?;
                     print_issue(&issue, cli.json);
                 }

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use git_forge::Store;
 use git_forge::comment::{find_threads_by_object, list_thread_comments};
-use git_forge::refs::{ISSUE_INDEX, REVIEW_INDEX, walk_tree};
+use git_forge::refs::{ISSUE_INDEX, ISSUE_PREFIX, REVIEW_INDEX, REVIEW_PREFIX, walk_tree};
 use git_forge::sync::SyncReport;
 use git2::Repository;
 
@@ -88,6 +88,14 @@ pub async fn export_issues(
                     eprintln!("forge: failed to write display ID for issue {number}: {e:#}");
                     report.failed += 1;
                     continue;
+                }
+
+                let source_url = format!(
+                    "https://github.com/{}/{}/issues/{number}",
+                    cfg.owner, cfg.repo,
+                );
+                if let Err(e) = store.write_source_url(ISSUE_PREFIX, &issue.oid, &source_url) {
+                    eprintln!("forge: failed to write source URL for issue {number}: {e:#}");
                 }
 
                 let state_key = format!("issues/{number}");
@@ -244,6 +252,14 @@ pub async fn export_reviews(
                     eprintln!("forge: failed to write display ID for review {number}: {e:#}");
                     report.failed += 1;
                     continue;
+                }
+
+                let source_url = format!(
+                    "https://github.com/{}/{}/pull/{number}",
+                    cfg.owner, cfg.repo,
+                );
+                if let Err(e) = store.write_source_url(REVIEW_PREFIX, &review.oid, &source_url) {
+                    eprintln!("forge: failed to write source URL for review {number}: {e:#}");
                 }
 
                 let state_key = format!("reviews/{number}");

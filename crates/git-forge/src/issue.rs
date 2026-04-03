@@ -322,6 +322,7 @@ impl Store<'_> {
         remove_labels: &[&str],
         add_assignees: &[&str],
         remove_assignees: &[&str],
+        source_url: Option<&str>,
     ) -> Result<Issue> {
         let index = read_index(self.repo, ISSUE_INDEX)?;
         let known_oids = self.repo.list(ISSUE_PREFIX)?;
@@ -365,6 +366,9 @@ impl Store<'_> {
         }
         for k in &rem_assignee_keys {
             mutations.push(Mutation::Delete(k.as_str()));
+        }
+        if let Some(url) = source_url {
+            mutations.push(Mutation::Set("source/url", url.as_bytes()));
         }
 
         let entry = self.repo.update(&ref_name, &mutations, "update issue")?;
