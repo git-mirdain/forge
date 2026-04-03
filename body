@@ -1,0 +1,16 @@
+**No import-export idempotency: re-importing after export creates duplicates**
+
+The sync state tracks `issues/<github_number> → <forge_oid>` and `comments/<github_id> → <forge_oid>`. On import, an issue is skipped if `issues/<N>` exists in state. On export, an issue is skipped if any state entry has a matching forge OID value.
+
+But consider this flow:
+1. User creates a local issue (forge OID `aaa`).
+2. Export runs: creates GitHub issue #5, writes `issues/5 → aaa` to state.
+3. Import runs: fetches GitHub issue #5, sees `issues/5` already in state, skips. Correct.
+
+Now consider the reverse:
+1. Import runs: creates local issue from GitHub #5 with forge OID `bbb`, writes `issues/5 → bbb`.
+2. Export runs: iterates local issues, finds `bbb`, calls `lookup_by_forge_oid`, finds `issues/5 → bbb`, skips. Correct.
+
+But what about comments? On export (line 112-118), comments are exported for *all* local issues, including ones that were imported. If a user adds a local comment to an imported issue, that comment gets exported correctly. But if GitHub already has comments on issue #5 that were imported (with `comments/<github_id>` entries), and those imported comments have new forge OIDs — the export path checks `lookup_by_forge_oid(state, "comments", &comment.oid)`. The forge OID of the imported comment *is* in state as a value, so it would be skipped. This part works.
+
+The real problem: there is **no update/sync path**. If a GitHub issue's title or body changes after import, re-importing will skip it because `issues/<N>` exists in state. The user has no way to pull updates without clearing state. This is a significant gap for any real-world usage.
