@@ -1,0 +1,3 @@
+**`process_alive` is not portable**
+
+Shelling out to `kill -0` only works on Unix-like systems. On Windows, `kill` either does not exist or behaves differently. If this crate should be cross-platform (even theoretically), this needs a `cfg(unix)` guard with `libc::kill(pid, 0)` or the `nix` crate's `signal::kill`, and a Windows path using `OpenProcess`. If Windows is explicitly out of scope, a `cfg` compile-time error for non-Unix targets would at least document that.
