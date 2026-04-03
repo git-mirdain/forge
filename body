@@ -1,0 +1,5 @@
+**Silent fallback to bare binary name hides misconfiguration**
+
+If neither `target/debug` nor `$PATH` contains the binary, the code falls through to returning the bare name `"forge-lsp"` (or `"forge-mcp"`) and hopes the runtime resolves it. This means a missing binary won't produce an error at command-resolution time — instead, Zed will try to spawn a nonexistent command and the user will get an opaque "failed to start language server" error with no indication that the binary wasn't found.
+
+Returning `Err(format!("{BINARY_NAME} not found in $PATH"))` here would give the user an actionable error message instead of a confusing downstream failure.
