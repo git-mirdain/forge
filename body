@@ -1,0 +1,3 @@
+**`RemoteSync` trait uses RPITIT but takes `&Repository` not `&Store`.** The trait methods accept a raw `&Repository` instead of a `&Store`, which means implementors must construct their own `Store` internally (or bypass it entirely). This breaks the encapsulation that `Store` is supposed to provide and makes it easy for sync adapters to write to refs in ways that bypass index updates, display-ID assignment, or validation.
+
+Additionally, returning `impl Future` without `Send` bounds means these methods can't be spawned on a multi-threaded runtime without boxing. Since the sync daemon is likely to want concurrent import/export, this is a footgun waiting to happen.
