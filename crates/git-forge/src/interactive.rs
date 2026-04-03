@@ -315,6 +315,104 @@ fn prompt_add_remove_list(label: &str, current: &[String]) -> Result<(Vec<String
     Ok((add, remove))
 }
 
+/// Collected input from the interactive `config edit` prompts.
+pub struct EditConfigInput {
+    /// Sigils to set (entity → prefix).
+    pub add_sigils: Vec<(String, String)>,
+    /// Sigil entity names to remove.
+    pub remove_sigils: Vec<String>,
+    /// Sync scopes to enable.
+    pub add_sync: Vec<String>,
+    /// Sync scopes to disable.
+    pub remove_sync: Vec<String>,
+}
+
+/// Prompt the user to edit a provider config entry.
+///
+/// # Errors
+/// Returns an error if a prompt is interrupted.
+pub fn prompt_edit_config(
+    current_sigils: &std::collections::BTreeMap<String, String>,
+    current_sync: &std::collections::BTreeMap<String, String>,
+) -> Result<EditConfigInput> {
+    let field_options = vec!["sigils", "sync"];
+    let fields = MultiSelect::new("Fields to edit", field_options)
+        .prompt()
+        .map_err(|_| Error::Interrupted)?;
+
+    let mut input = EditConfigInput {
+        add_sigils: Vec::new(),
+        remove_sigils: Vec::new(),
+        add_sync: Vec::new(),
+        remove_sync: Vec::new(),
+    };
+
+    for field in &fields {
+        match *field {
+            "sigils" => {
+                let current_entries: Vec<String> = current_sigils
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect();
+                if !current_entries.is_empty() {
+                    let defaults: Vec<usize> = (0..current_entries.len()).collect();
+                    let kept = MultiSelect::new(
+                        "Current sigils (deselect to remove)",
+                        current_entries.clone(),
+                    )
+                    .with_default(&defaults)
+                    .prompt()
+                    .map_err(|_| Error::Interrupted)?;
+
+                    let keys: Vec<&String> = current_sigils.keys().collect();
+                    for (i, entry) in current_entries.iter().enumerate() {
+                        if !kept.contains(entry) {
+                            input.remove_sigils.push(keys[i].clone());
+                        }
+                    }
+                }
+                let add_raw =
+                    Text::new("New sigils to add (comma-separated, e.g. issue=GH#,review=PR#)")
+                        .with_default("")
+                        .prompt()
+                        .map_err(|_| Error::Interrupted)?;
+                for pair in parse_csv(&add_raw) {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        input.add_sigils.push((k.to_string(), v.to_string()));
+                    }
+                }
+            }
+            "sync" => {
+                let all_scopes = vec!["issues", "reviews"];
+                let defaults: Vec<usize> = all_scopes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| current_sync.contains_key(**s))
+                    .map(|(i, _)| i)
+                    .collect();
+                let selected =
+                    MultiSelect::new("Sync scopes (select to enable)", all_scopes.clone())
+                        .with_default(&defaults)
+                        .prompt()
+                        .map_err(|_| Error::Interrupted)?;
+
+                for scope in &all_scopes {
+                    let was_enabled = current_sync.contains_key(*scope);
+                    let is_enabled = selected.contains(scope);
+                    if is_enabled && !was_enabled {
+                        input.add_sync.push((*scope).to_string());
+                    } else if !is_enabled && was_enabled {
+                        input.remove_sync.push((*scope).to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(input)
+}
+
 fn parse_csv(s: &str) -> Vec<String> {
     s.split(',')
         .map(str::trim)

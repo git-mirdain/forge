@@ -702,6 +702,18 @@ impl Executor {
         Ok(entries)
     }
 
+    /// Resolve a remote name to a `(provider, owner, repo)` tuple.
+    fn resolve_remote(&self, remote_name: &str) -> Result<(String, String, String)> {
+        let remote = self
+            .repo
+            .find_remote(remote_name)
+            .map_err(|_| Error::Config(format!("remote not found: {remote_name}")))?;
+        let url = remote
+            .url()
+            .ok_or_else(|| Error::Config(format!("remote {remote_name} has no URL")))?;
+        parse_remote_url(url)
+    }
+
     /// Edit sigils and sync scopes for a provider config resolved from a
     /// git remote.
     ///
@@ -711,37 +723,22 @@ impl Executor {
     pub fn config_edit(
         &self,
         remote_name: &str,
-        sigils: &[(String, String)],
-        enable_sync: &[String],
-        disable_sync: &[String],
+        add_sigils: &[(String, String)],
+        remove_sigils: &[String],
+        add_sync: &[String],
+        remove_sync: &[String],
     ) -> Result<()> {
-        let remote = self
-            .repo
-            .find_remote(remote_name)
-            .map_err(|_| Error::Config(format!("remote not found: {remote_name}")))?;
-        let url = remote
-            .url()
-            .ok_or_else(|| Error::Config(format!("remote {remote_name} has no URL")))?;
-        let (provider, owner, repo) = parse_remote_url(url)?;
+        let (provider, owner, repo) = self.resolve_remote(remote_name)?;
         let prefix = format!("provider/{provider}/{owner}/{repo}");
 
-        // Verify the entry exists by reading its sigil subtree.
-        let existing = crate::refs::read_config_subtree(&self.repo, &format!("{prefix}/sigil"))?;
-        if existing.is_empty() && sigils.is_empty() {
-            let sync_existing =
-                crate::refs::read_config_subtree(&self.repo, &format!("{prefix}/sync"))?;
-            if sync_existing.is_empty() {
-                return Err(Error::Config(format!(
-                    "no config entry for {provider}/{owner}/{repo} (from remote {remote_name})"
-                )));
-            }
+        for entity in remove_sigils {
+            crate::refs::remove_config_blob(&self.repo, &format!("{prefix}/sigil/{entity}"))?;
         }
-
-        for (key, value) in sigils {
+        for (key, value) in add_sigils {
             crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sigil/{key}"), value)?;
         }
 
-        for scope in enable_sync {
+        for scope in add_sync {
             match scope.as_str() {
                 "issues" | "reviews" => {
                     crate::refs::write_config_blob(
@@ -755,7 +752,7 @@ impl Executor {
                 }
             }
         }
-        for scope in disable_sync {
+        for scope in remove_sync {
             match scope.as_str() {
                 "issues" | "reviews" => {
                     crate::refs::remove_config_blob(&self.repo, &format!("{prefix}/sync/{scope}"))?;
@@ -767,6 +764,21 @@ impl Executor {
         }
 
         Ok(())
+    }
+
+    /// Read current sigils and sync scopes for a config entry.
+    fn config_read_current(
+        &self,
+        remote_name: &str,
+    ) -> Result<(
+        std::collections::BTreeMap<String, String>,
+        std::collections::BTreeMap<String, String>,
+    )> {
+        let (provider, owner, repo) = self.resolve_remote(remote_name)?;
+        let prefix = format!("provider/{provider}/{owner}/{repo}");
+        let sigils = crate::refs::read_config_subtree(&self.repo, &format!("{prefix}/sigil"))?;
+        let sync = crate::refs::read_config_subtree(&self.repo, &format!("{prefix}/sync"))?;
+        Ok((sigils, sync))
     }
 
     /// Remove a provider config entry.
@@ -1460,11 +1472,48 @@ impl Executor {
 
                 ConfigCommand::Edit {
                     remote,
-                    sigils,
-                    enable_sync,
-                    disable_sync,
+                    add_sigils,
+                    remove_sigils,
+                    add_sync,
+                    remove_sync,
+                    interactive,
                 } => {
-                    self.config_edit(remote, sigils, enable_sync, disable_sync)?;
+                    let no_flags = add_sigils.is_empty()
+                        && remove_sigils.is_empty()
+                        && add_sync.is_empty()
+                        && remove_sync.is_empty();
+                    let interactive = *interactive || should_interact(no_flags);
+
+                    let (eff_add_sigils, eff_remove_sigils, eff_add_sync, eff_remove_sync) =
+                        if interactive {
+                            let (current_sigils, current_sync) =
+                                self.config_read_current(remote)?;
+                            let input = crate::interactive::prompt_edit_config(
+                                &current_sigils,
+                                &current_sync,
+                            )?;
+                            (
+                                input.add_sigils,
+                                input.remove_sigils,
+                                input.add_sync,
+                                input.remove_sync,
+                            )
+                        } else {
+                            (
+                                add_sigils.clone(),
+                                remove_sigils.clone(),
+                                add_sync.clone(),
+                                remove_sync.clone(),
+                            )
+                        };
+
+                    self.config_edit(
+                        remote,
+                        &eff_add_sigils,
+                        &eff_remove_sigils,
+                        &eff_add_sync,
+                        &eff_remove_sync,
+                    )?;
                     if !cli.json {
                         println!("updated config for remote {remote}");
                     }

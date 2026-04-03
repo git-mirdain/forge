@@ -96,22 +96,33 @@ pub enum ConfigCommand {
         repo: String,
     },
     /// Edit a provider config entry (resolved from a git remote).
+    ///
+    /// When no flags are given and a TTY is available, opens an interactive
+    /// picker to select which fields to modify.
     Edit {
         /// Remote name (default: origin).
         #[arg(long, short = 'r', default_value = "origin")]
         remote: String,
 
-        /// Set a sigil (e.g. --sigil issue=GH#).
-        #[arg(long = "sigil", value_parser = parse_key_value)]
-        sigils: Vec<(String, String)>,
+        /// Set a sigil (e.g. --add-sigil issue=GH#).
+        #[arg(long = "add-sigil", value_parser = parse_key_value)]
+        add_sigils: Vec<(String, String)>,
 
-        /// Enable syncing a scope (issues, reviews).
-        #[arg(long = "enable-sync")]
-        enable_sync: Vec<String>,
+        /// Remove a sigil by entity name (e.g. --remove-sigil review).
+        #[arg(long = "remove-sigil")]
+        remove_sigils: Vec<String>,
 
-        /// Disable syncing a scope (issues, reviews).
-        #[arg(long = "disable-sync")]
-        disable_sync: Vec<String>,
+        /// Add a sync scope (issues, reviews).
+        #[arg(long = "add-sync")]
+        add_sync: Vec<String>,
+
+        /// Remove a sync scope (issues, reviews).
+        #[arg(long = "remove-sync")]
+        remove_sync: Vec<String>,
+
+        /// Prompt interactively for fields to edit.
+        #[arg(long, short = 'i')]
+        interactive: bool,
     },
 }
 
