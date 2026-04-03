@@ -1,0 +1,5 @@
+**Non-force fetch can silently do nothing when local refs diverge**
+
+The comment on line 105 says "non-force to avoid destroying local work," but `git fetch` with a non-force refspec will simply *refuse* the update if the remote has diverged (non-fast-forward). The error is logged to stderr and swallowed — the server continues as if nothing happened, with stale local refs. There is no mechanism to detect or surface this divergence to the user.
+
+At minimum, failed fetches due to divergence should be logged at a higher severity or tracked so the user can be alerted. Silently running with stale data is arguably worse than force-updating.
