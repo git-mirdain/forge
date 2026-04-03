@@ -1,0 +1,3 @@
+**Comment index writes silently swallowed.** The return value of `index_add_comment_oid` and `index_add_anchor` is discarded with `let _ = ...`. If the index write fails (e.g. concurrent ref update, disk full, signature not configured), the comment is created but the index silently becomes stale. Future `find_threads_by_object` calls will miss the thread, and there's no mechanism to detect or recover from the inconsistency short of a full `rebuild_comments_index`.
+
+At minimum, log a warning. Ideally, make the index write part of the same atomic operation or propagate the error.
