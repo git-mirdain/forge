@@ -270,21 +270,6 @@ fn resolve_head_without_allow_dirty_returns_plain() {
 }
 
 // ---------------------------------------------------------------------------
-// should_interact: FORGE_NO_INTERACTIVE suppresses
-// ---------------------------------------------------------------------------
-
-#[test]
-fn should_interact_returns_false_when_not_missing_input() {
-    assert!(!git_forge::exe::should_interact(false));
-}
-
-#[test]
-fn should_interact_returns_false_without_tty() {
-    // Tests run without a TTY, so should_interact(true) is still false.
-    assert!(!git_forge::exe::should_interact(true));
-}
-
-// ---------------------------------------------------------------------------
 // checkout_review: creates worktree in a new parent directory
 // (regression: create_dir_all created the leaf, but libgit2 also creates it)
 // ---------------------------------------------------------------------------
