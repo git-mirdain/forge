@@ -1,0 +1,3 @@
+**`SYNC_REF_PREFIXES` includes `refs/forge/sync/*` — potential feedback loop**
+
+If two `forge-server` instances run against different clones of the same repo (or on different machines), they will each push their sync state to the remote, then fetch each other's sync state. Depending on how sync cursors work, this could cause import/export oscillation or duplicate work. It is worth examining whether `refs/forge/sync/*` should be excluded from remote sync (like `refs/forge/config` already is) since sync state is inherently per-clone.
