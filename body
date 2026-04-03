@@ -1,0 +1,7 @@
+**Import review comments anchor to the review OID, not the blob OID — lossy mapping**
+
+When importing review comments from GitHub, the anchor is constructed with `oid: forge_review_oid.clone()` (the review's OID) and `start_line: comment.line`. But GitHub review comments are anchored to a specific *file* at a specific *commit*. The `comment.path` field (the file path) and `comment.commit_id` (the commit SHA) are both discarded.
+
+This means when the comment is later exported back or displayed, the system has no idea which file the comment was about. The anchor points at the review object itself, not at the blob the comment was written on. This is a significant fidelity loss in the import path.
+
+By contrast, the export path in `export.rs` (line 340-344) tries to `resolve_blob_path` to find the file — but that only works for locally-created comments that already have a blob OID anchor, not for comments that went through this import path.
