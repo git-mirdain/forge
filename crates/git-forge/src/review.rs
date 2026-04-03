@@ -402,6 +402,58 @@ impl Store<'_> {
         })
     }
 
+    /// Rebuild the review display-ID index from scratch.
+    ///
+    /// Same logic as [`Store::reindex_issues`] but for reviews — parses
+    /// `source/url` fields matching `…/pull/{number}` and applies the
+    /// current `review` sigil from config.
+    ///
+    /// Returns the number of entries written.
+    ///
+    /// # Errors
+    /// Returns an error if any git operation fails.
+    pub fn reindex_reviews(&self) -> Result<usize> {
+        use crate::refs;
+
+        let old_index = read_index(self.repo, REVIEW_INDEX)?;
+        let oids = self.repo.list(REVIEW_PREFIX)?;
+
+        let sigil_map = crate::reindex::build_sigil_map(self.repo, "review")?;
+
+        let mut entries: Vec<(String, String)> = Vec::new();
+        let mut next_local_id = 1u64;
+
+        for oid in &oids {
+            let ref_name = format!("{REVIEW_PREFIX}{oid}");
+            let entry = self.repo.read(&ref_name)?;
+
+            if let Some(display_id) =
+                crate::reindex::display_id_from_source(&entry, &sigil_map, "pull")
+            {
+                entries.push((display_id, oid.clone()));
+            } else {
+                let existing = old_index
+                    .as_ref()
+                    .and_then(|idx| idx.iter().find(|(_, v)| v.as_str() == oid))
+                    .map(|(k, _)| k.clone());
+                let display_id = existing.unwrap_or_else(|| {
+                    let id = next_local_id.to_string();
+                    next_local_id += 1;
+                    id
+                });
+                entries.push((display_id, oid.clone()));
+            }
+        }
+
+        let count = entries.len();
+        let pairs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        crate::reindex::write_index_from_scratch(self.repo, refs::REVIEW_INDEX, &pairs)?;
+        Ok(count)
+    }
+
     /// Fetch a single review by display ID or OID prefix.
     ///
     /// # Errors

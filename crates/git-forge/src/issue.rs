@@ -252,6 +252,61 @@ impl Store<'_> {
             .collect())
     }
 
+    /// Rebuild the issue display-ID index from scratch.
+    ///
+    /// Reads every issue's `source/url` field, matches it against the current
+    /// config sigils, and writes new `{sigil}{number}` → OID entries. Locally
+    /// created issues (no `source/url`) retain their existing display ID if one
+    /// is present, or are assigned a sequential numeric ID.
+    ///
+    /// Returns the number of entries written.
+    ///
+    /// # Errors
+    /// Returns an error if any git operation fails.
+    pub fn reindex_issues(&self) -> Result<usize> {
+        use crate::refs;
+
+        let old_index = read_index(self.repo, ISSUE_INDEX)?;
+        let oids = self.repo.list(ISSUE_PREFIX)?;
+
+        // Build (owner, repo) → issue sigil from config.
+        let sigil_map = crate::reindex::build_sigil_map(self.repo, "issue")?;
+
+        let mut entries: Vec<(String, String)> = Vec::new();
+        let mut next_local_id = 1u64;
+
+        for oid in &oids {
+            let ref_name = format!("{ISSUE_PREFIX}{oid}");
+            let entry = self.repo.read(&ref_name)?;
+
+            if let Some(display_id) =
+                crate::reindex::display_id_from_source(&entry, &sigil_map, "issues")
+            {
+                entries.push((display_id, oid.clone()));
+            } else {
+                // Local issue — keep existing display ID or assign next sequential.
+                let existing = old_index
+                    .as_ref()
+                    .and_then(|idx| idx.iter().find(|(_, v)| v.as_str() == oid))
+                    .map(|(k, _)| k.clone());
+                let display_id = existing.unwrap_or_else(|| {
+                    let id = next_local_id.to_string();
+                    next_local_id += 1;
+                    id
+                });
+                entries.push((display_id, oid.clone()));
+            }
+        }
+
+        let count = entries.len();
+        let pairs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        crate::reindex::write_index_from_scratch(self.repo, refs::ISSUE_INDEX, &pairs)?;
+        Ok(count)
+    }
+
     /// Apply a partial update to an issue.
     ///
     /// # Errors

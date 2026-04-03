@@ -21,6 +21,7 @@ pub mod interactive;
 pub mod exe;
 
 mod index;
+pub(crate) mod reindex;
 
 pub use error::{Error, Result};
 

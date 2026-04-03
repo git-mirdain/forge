@@ -1518,6 +1518,13 @@ impl Executor {
                         println!("updated config for remote {remote}");
                     }
                 }
+
+                ConfigCommand::Reindex => {
+                    let store = self.store();
+                    let issues = store.reindex_issues()?;
+                    let reviews = store.reindex_reviews()?;
+                    eprintln!("reindexed {issues} issues, {reviews} reviews");
+                }
             },
 
             Command::Comment { command } => match command {

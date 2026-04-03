@@ -163,6 +163,8 @@ pub enum ConfigCommand {
         #[arg(long, short = 'i')]
         interactive: bool,
     },
+    /// Rebuild display-ID indexes from current config sigils.
+    Reindex,
 }
 
 fn parse_key_value(s: &str) -> std::result::Result<(String, String), String> {
