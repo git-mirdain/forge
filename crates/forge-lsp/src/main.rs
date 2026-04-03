@@ -1,10 +1,10 @@
 //! Forge LSP server — surfaces inline comments as diagnostics, inlay hints,
 //! and code actions.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
-use std::time::SystemTime;
 
 use git2::Repository;
 use serde_json::Value;
@@ -42,6 +42,8 @@ struct ForgeLanguageServer {
     repo_path: RwLock<Option<PathBuf>>,
     file_contents: RwLock<HashMap<Url, String>>,
     pending: Mutex<HashMap<PathBuf, PendingComment>>,
+    published_uris: Mutex<HashSet<Url>>,
+    draft_counter: AtomicU64,
 }
 
 // ── comment collection ───────────────────────────────────────────────────────
@@ -77,19 +79,25 @@ fn comments_for_blob(repo: &Repository, blob_oid: &str) -> Vec<ThreadComment> {
     let Ok(thread_ids) = find_threads_by_object(repo, blob_oid) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
+    let mut all = Vec::new();
     for tid in &thread_ids {
         let Ok(comments) = list_thread_comments(repo, tid) else {
             continue;
         };
-        for c in comments.into_iter().filter(|c| c.replaces.is_none()) {
-            out.push(ThreadComment {
+        for c in comments {
+            all.push(ThreadComment {
                 thread_id: tid.clone(),
                 comment: c,
             });
         }
     }
-    out
+    let replaced: HashSet<String> = all
+        .iter()
+        .filter_map(|tc| tc.comment.replaces.clone())
+        .collect();
+    all.into_iter()
+        .filter(|tc| !replaced.contains(&tc.comment.oid))
+        .collect()
 }
 
 // ── diagnostics ──────────────────────────────────────────────────────────────
@@ -142,9 +150,13 @@ impl ForgeLanguageServer {
             repo_path: RwLock::new(None),
             file_contents: RwLock::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
+            published_uris: Mutex::new(HashSet::new()),
+            draft_counter: AtomicU64::new(0),
         }
     }
 
+    // NB: calls `Repository::discover()` on every invocation because
+    // `git2::Repository` is `!Sync` and cannot be cached on the server struct.
     fn open_repo(&self) -> Option<Repository> {
         let path = self.repo_path.read().ok()?;
         let path = path.as_ref()?;
@@ -152,18 +164,21 @@ impl ForgeLanguageServer {
     }
 
     fn repo_root(&self) -> Option<PathBuf> {
-        let path = self.repo_path.read().ok()?;
-        let path = path.as_ref()?;
-        let repo = Repository::discover(path).ok()?;
-        repo.path().parent().map(Into::into)
+        let repo = self.open_repo()?;
+        Some(
+            repo.workdir()
+                .map_or_else(|| repo.path().into(), Into::into),
+        )
     }
 
     fn workdir(&self) -> Option<PathBuf> {
         self.open_repo()?.workdir().map(Into::into)
     }
 
-    fn hash_content(repo: &Repository, content: &[u8]) -> Option<String> {
-        repo.blob(content).ok().map(|oid| oid.to_string())
+    fn hash_content(_repo: &Repository, content: &[u8]) -> Option<String> {
+        git2::Oid::hash_object(git2::ObjectType::Blob, content)
+            .ok()
+            .map(|oid| oid.to_string())
     }
 
     fn hints_for_blob(repo: &Repository, blob_oid: &str) -> Vec<InlayHint> {
@@ -175,19 +190,25 @@ impl ForgeLanguageServer {
     }
 
     fn store_content(&self, uri: Url, content: String) {
-        if let Ok(mut map) = self.file_contents.write() {
-            map.insert(uri, content);
-        }
+        self.file_contents
+            .write()
+            .expect("lock poisoned")
+            .insert(uri, content);
     }
 
     fn remove_content(&self, uri: &Url) {
-        if let Ok(mut map) = self.file_contents.write() {
-            map.remove(uri);
-        }
+        self.file_contents
+            .write()
+            .expect("lock poisoned")
+            .remove(uri);
     }
 
     fn get_content(&self, uri: &Url) -> Option<String> {
-        self.file_contents.read().ok()?.get(uri).cloned()
+        self.file_contents
+            .read()
+            .expect("lock poisoned")
+            .get(uri)
+            .cloned()
     }
 
     async fn refresh(&self) {
@@ -198,21 +219,18 @@ impl ForgeLanguageServer {
         let root = self.repo_root()?;
         let dir = root.join(DRAFTS_DIR);
         let _ = std::fs::create_dir_all(&dir);
-        let ts = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        Some(dir.join(format!("forge-comment-{ts}.md")))
+        let pid = std::process::id();
+        let seq = self.draft_counter.fetch_add(1, Ordering::Relaxed);
+        Some(dir.join(format!("forge-comment-{pid}-{seq}.md")))
     }
 
     fn is_draft(path: &std::path::Path) -> bool {
-        path.components().any(|c| c.as_os_str() == "drafts")
-            && path.components().any(|c| c.as_os_str() == "forge")
-            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-                n.starts_with("forge-comment-")
-                    && std::path::Path::new(n)
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-            })
+        let s = path.to_string_lossy();
+        s.contains(".git/forge/comments/drafts/")
+            && path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("forge-comment-"))
     }
 
     /// Publish diagnostics for all files in the HEAD tree that have comments.
@@ -242,14 +260,28 @@ impl ForgeLanguageServer {
             }
         }
 
-        // Publish.
+        // Publish and track which URIs we published to.
+        let mut current_uris = HashSet::new();
         for (path, diagnostics) in &diags_by_path {
             let abs = workdir.join(path);
             if let Ok(uri) = Url::from_file_path(&abs) {
                 self.client
-                    .publish_diagnostics(uri, diagnostics.clone(), None)
+                    .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
                     .await;
+                current_uris.insert(uri);
             }
+        }
+
+        // Clear diagnostics for URIs that were previously published but no
+        // longer have any comments.
+        let previous = {
+            let mut published = self.published_uris.lock().expect("lock poisoned");
+            std::mem::replace(&mut *published, current_uris.clone())
+        };
+        for stale in previous.difference(&current_uris) {
+            self.client
+                .publish_diagnostics(stale.clone(), Vec::new(), None)
+                .await;
         }
     }
 
@@ -282,35 +314,55 @@ impl ForgeLanguageServer {
         let Some(pending) = pending else { return };
 
         let raw = text.unwrap_or_else(|| std::fs::read_to_string(path).unwrap_or_default());
-        let body: String = raw
-            .lines()
-            .skip_while(|l| l.starts_with("<!--"))
-            .collect::<Vec<_>>()
-            .join("\n")
-            .trim()
-            .to_string();
-
-        let _ = std::fs::remove_file(path);
+        let mut lines = raw.lines();
+        // Skip the forge header line if present.
+        if let Some(first) = lines.clone().next()
+            && first.starts_with("<!-- forge:")
+        {
+            lines.next();
+        }
+        let body: String = lines.collect::<Vec<_>>().join("\n").trim().to_string();
 
         if body.is_empty() {
+            let _ = std::fs::remove_file(path);
             return;
         }
 
         let Some(repo) = self.open_repo() else { return };
 
-        match pending {
+        let result: std::result::Result<(), String> = match pending {
             PendingComment::New { blob_oid, line } => {
                 let anchor = Anchor {
                     oid: blob_oid,
                     start_line: Some(line + 1),
                     end_line: Some(line + 1),
                 };
-                let _ = create_thread(&repo, &body, Some(&anchor), None);
+                create_thread(&repo, &body, Some(&anchor), None)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
             }
             PendingComment::Reply { comment_oid } => {
-                if let Ok(Some(thread_id)) = find_thread_by_comment(&repo, &comment_oid) {
-                    let _ = reply_to_thread(&repo, &thread_id, &body, &comment_oid, None, None);
+                match find_thread_by_comment(&repo, &comment_oid) {
+                    Ok(Some(thread_id)) => {
+                        reply_to_thread(&repo, &thread_id, &body, &comment_oid, None, None)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    }
+                    Ok(None) => Err(format!("thread not found for {comment_oid}")),
+                    Err(e) => Err(e.to_string()),
                 }
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(msg) => {
+                self.client
+                    .show_message(MessageType::ERROR, format!("forge: {msg}"))
+                    .await;
+                return;
             }
         }
 
@@ -375,9 +427,10 @@ impl ForgeLanguageServer {
             return;
         };
 
-        if let Ok(mut map) = self.pending.lock() {
-            map.insert(path.clone(), pending);
-        }
+        self.pending
+            .lock()
+            .expect("lock poisoned")
+            .insert(path.clone(), pending);
 
         let edit = WorkspaceEdit {
             changes: None,
@@ -495,10 +548,8 @@ impl LanguageServer for ForgeLanguageServer {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.last() {
-            let uri = params.text_document.uri.clone();
             self.store_content(params.text_document.uri, change.text.clone());
             self.refresh().await;
-            self.publish_file_diagnostics(&uri).await;
         }
     }
 
