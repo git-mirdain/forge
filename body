@@ -1,0 +1,3 @@
+**`parse_trailers` uses `HashMap` — last-writer-wins on duplicate keys.** If a commit message contains two `Anchor:` lines (malformed or adversarial), only the last one is kept. This could be used to craft a commit message where the visible trailer shows one anchor but the parsed value is another. Since trailers drive anchor resolution, approval scoping, and thread identity, this is a potential integrity issue.
+
+Consider using a `Vec<(String, String)>` or at least detecting and rejecting duplicates for security-sensitive keys like `Anchor` and `Comment-Id`.
