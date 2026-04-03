@@ -17,9 +17,9 @@ use tower_lsp::lsp_types::{
     ExecuteCommandParams, InitializeParams, InitializeResult, InitializedParams, InlayHint,
     InlayHintLabel, InlayHintParams, MessageType, NumberOrString, OneOf,
     OptionalVersionedTextDocumentIdentifier, Position, Range, ResourceOp, SaveOptions,
-    ServerCapabilities, TextDocumentEdit, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
-    WorkspaceEdit,
+    ServerCapabilities, ShowDocumentParams, TextDocumentEdit, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+    WorkDoneProgressOptions, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -318,6 +318,57 @@ impl ForgeLanguageServer {
         self.publish_all_diagnostics().await;
     }
 
+    async fn open_unresolved_files(&self) {
+        let Some(repo) = self.open_repo() else {
+            return;
+        };
+        let Some(workdir) = self.workdir() else {
+            return;
+        };
+
+        let blob_map = head_blob_map(&repo);
+        let mut opened = 0u32;
+        for (blob_oid, paths) in &blob_map {
+            let tcs = comments_for_blob(&repo, blob_oid);
+            let has_unresolved = tcs.iter().any(|tc| !tc.comment.resolved);
+            if !has_unresolved {
+                continue;
+            }
+            for path in paths {
+                let abs = workdir.join(path);
+                let Ok(uri) = Url::from_file_path(&abs) else {
+                    continue;
+                };
+                match self
+                    .client
+                    .show_document(ShowDocumentParams {
+                        uri,
+                        external: None,
+                        take_focus: Some(opened == 0),
+                        selection: None,
+                    })
+                    .await
+                {
+                    Ok(_) => opened += 1,
+                    Err(e) => {
+                        self.client
+                            .log_message(
+                                MessageType::WARNING,
+                                format!("showDocument failed for {path}: {e}"),
+                            )
+                            .await;
+                    }
+                }
+            }
+        }
+
+        if opened == 0 {
+            self.client
+                .log_message(MessageType::INFO, "No files with unresolved comments")
+                .await;
+        }
+    }
+
     async fn open_draft(&self, path: &PathBuf, header: &str, pending: PendingComment) {
         let Ok(uri) = Url::from_file_path(path) else {
             return;
@@ -413,6 +464,7 @@ impl LanguageServer for ForgeLanguageServer {
                         "forge.comment.new".to_string(),
                         "forge.comment.reply".to_string(),
                         "forge.comment.resolve".to_string(),
+                        "forge.review.open".to_string(),
                     ],
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
@@ -500,6 +552,16 @@ impl LanguageServer for ForgeLanguageServer {
         };
 
         let mut actions: CodeActionResponse = Vec::new();
+
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: "Open all files with unresolved comments".to_string(),
+            command: Some(Command {
+                title: "Open all files with unresolved comments".to_string(),
+                command: "forge.review.open".to_string(),
+                arguments: None,
+            }),
+            ..Default::default()
+        }));
 
         actions.push(CodeActionOrCommand::CodeAction(CodeAction {
             title: "New forge comment".to_string(),
@@ -624,6 +686,9 @@ impl LanguageServer for ForgeLanguageServer {
                     },
                 )
                 .await;
+            }
+            "forge.review.open" => {
+                self.open_unresolved_files().await;
             }
             "forge.comment.resolve" => {
                 let Some(Value::String(thread_id)) = args.first() else {
