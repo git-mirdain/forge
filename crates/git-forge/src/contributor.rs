@@ -353,6 +353,8 @@ impl Store<'_> {
     ///
     /// # Errors
     /// Returns an error if a git operation fails.
+    //
+    // TODO: O(n) full table scan — should use a handle → UUID index.
     pub fn find_contributor_by_handle(&self, handle: &Handle) -> Result<Option<Contributor>> {
         for c in self.list_contributors()? {
             if c.handle == *handle {
@@ -490,6 +492,11 @@ impl Store<'_> {
     ///
     /// # Errors
     /// Returns [`Error::NotFound`] if the contributor doesn't exist.
+    //
+    // TODO: contributor mutations (add/remove role, name, email, key) each
+    // create a separate commit. A batch of edits can leave partial state if
+    // an intermediate operation fails. These should be consolidated into a
+    // single commit per logical edit session.
     pub fn add_contributor_role(&self, handle: &str, role: &str) -> Result<Contributor> {
         let h = Handle::new(handle)?;
         let contributor = self

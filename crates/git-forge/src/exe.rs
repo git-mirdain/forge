@@ -610,15 +610,16 @@ impl Executor {
             let (provider, owner, repo) = parse_remote_url(url)?;
             let sigils = default_sigils(&provider);
             let prefix = format!("provider/{provider}/{owner}/{repo}");
-            for (entity, sigil) in &sigils {
-                crate::refs::write_config_blob(
-                    &self.repo,
-                    &format!("{prefix}/sigil/{entity}"),
-                    sigil,
-                )?;
-            }
-            // Default sync scope: issues only.
-            crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sync/issues"), "true")?;
+            let mut blobs: Vec<(String, String)> = sigils
+                .iter()
+                .map(|(entity, sigil)| (format!("{prefix}/sigil/{entity}"), sigil.clone()))
+                .collect();
+            blobs.push((format!("{prefix}/sync/issues"), "true".to_string()));
+            let blob_refs: Vec<(&str, &str)> = blobs
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            crate::refs::write_config_blobs(&self.repo, &blob_refs)?;
             added.push(ConfigEntry {
                 provider,
                 owner,
@@ -636,11 +637,16 @@ impl Executor {
     pub fn config_add(&self, provider: &str, owner: &str, repo: &str) -> Result<()> {
         let sigils = default_sigils(provider);
         let prefix = format!("provider/{provider}/{owner}/{repo}");
-        for (entity, sigil) in &sigils {
-            crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sigil/{entity}"), sigil)?;
-        }
-        // Default sync scope: issues only.
-        crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sync/issues"), "true")?;
+        let mut blobs: Vec<(String, String)> = sigils
+            .iter()
+            .map(|(entity, sigil)| (format!("{prefix}/sigil/{entity}"), sigil.clone()))
+            .collect();
+        blobs.push((format!("{prefix}/sync/issues"), "true".to_string()));
+        let blob_refs: Vec<(&str, &str)> = blobs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        crate::refs::write_config_blobs(&self.repo, &blob_refs)?;
         Ok(())
     }
 
@@ -736,24 +742,6 @@ impl Executor {
         for entity in remove_sigils {
             crate::refs::remove_config_blob(&self.repo, &format!("{prefix}/sigil/{entity}"))?;
         }
-        for (key, value) in add_sigils {
-            crate::refs::write_config_blob(&self.repo, &format!("{prefix}/sigil/{key}"), value)?;
-        }
-
-        for scope in add_sync {
-            match scope.as_str() {
-                "issues" | "reviews" => {
-                    crate::refs::write_config_blob(
-                        &self.repo,
-                        &format!("{prefix}/sync/{scope}"),
-                        "true",
-                    )?;
-                }
-                other => {
-                    return Err(Error::Config(format!("unknown sync scope: {other}")));
-                }
-            }
-        }
         for scope in remove_sync {
             match scope.as_str() {
                 "issues" | "reviews" => {
@@ -763,6 +751,32 @@ impl Executor {
                     return Err(Error::Config(format!("unknown sync scope: {other}")));
                 }
             }
+        }
+
+        // Validate add_sync scopes before batching.
+        for scope in add_sync {
+            match scope.as_str() {
+                "issues" | "reviews" => {}
+                other => {
+                    return Err(Error::Config(format!("unknown sync scope: {other}")));
+                }
+            }
+        }
+
+        // Batch all writes into a single commit.
+        let mut blobs: Vec<(String, String)> = add_sigils
+            .iter()
+            .map(|(key, value)| (format!("{prefix}/sigil/{key}"), value.clone()))
+            .collect();
+        for scope in add_sync {
+            blobs.push((format!("{prefix}/sync/{scope}"), "true".to_string()));
+        }
+        if !blobs.is_empty() {
+            let blob_refs: Vec<(&str, &str)> = blobs
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            crate::refs::write_config_blobs(&self.repo, &blob_refs)?;
         }
 
         Ok(())

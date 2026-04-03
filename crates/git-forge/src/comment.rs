@@ -108,6 +108,18 @@ fn format_trailers(
 /// The trailer block is the last paragraph where every non-empty line
 /// is a known forge trailer (`Key: value`). Unknown keys are left in
 /// the body so that user-authored text is never misinterpreted.
+/// Trailer keys that must not appear more than once (security-sensitive).
+const UNIQUE_TRAILER_KEYS: &[&str] = &["Anchor", TRAILER_COMMENT_ID];
+
+/// Parse trailers from a commit message.
+///
+/// # Panics
+/// Does not panic.
+///
+/// # Errors (encoded as empty trailers)
+/// If a security-sensitive trailer key (`Anchor`, `Comment-Id`) appears
+/// more than once, the trailer map is returned empty so that callers
+/// never silently accept a last-writer-wins duplicate.
 #[must_use]
 pub fn parse_trailers(message: &str) -> (String, HashMap<String, String>) {
     let paragraphs: Vec<&str> = message.split("\n\n").collect();
@@ -129,9 +141,19 @@ pub fn parse_trailers(message: &str) -> (String, HashMap<String, String>) {
         && is_trailer_para(last)
     {
         let mut trailers = HashMap::new();
+        let mut seen: HashMap<&str, usize> = HashMap::new();
         for line in last.lines() {
             if let Some((k, v)) = line.split_once(": ") {
+                *seen.entry(k).or_default() += 1;
                 trailers.insert(k.to_string(), v.to_string());
+            }
+        }
+        for &key in UNIQUE_TRAILER_KEYS {
+            if seen.get(key).copied().unwrap_or(0) > 1 {
+                eprintln!(
+                    "warning: duplicate security-sensitive trailer {key:?}, rejecting trailers"
+                );
+                return (message.trim().to_string(), HashMap::new());
             }
         }
         let body = if paragraphs.len() > 1 {
@@ -361,8 +383,12 @@ pub fn create_thread(
     let tree = build_comment_tree(repo, body, anchor, context_lines)?;
     let entry = repo.append(&ref_name, &message, tree, None)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    let _ = index_add_comment_oid(repo, &comment.oid, &thread_id);
-    let _ = index_add_anchor(repo, anchor_oid_str, &thread_id);
+    if let Err(e) = index_add_comment_oid(repo, &comment.oid, &thread_id) {
+        eprintln!("warning: failed to index comment OID: {e}");
+    }
+    if let Err(e) = index_add_anchor(repo, anchor_oid_str, &thread_id) {
+        eprintln!("warning: failed to index anchor OID: {e}");
+    }
     Ok((thread_id, comment))
 }
 
@@ -403,7 +429,9 @@ pub fn reply_to_thread(
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
     let entry = repo.append(&ref_name, &message, tree, Some(parent))?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    let _ = index_add_comment_oid(repo, &comment.oid, thread_id);
+    if let Err(e) = index_add_comment_oid(repo, &comment.oid, thread_id) {
+        eprintln!("warning: failed to index comment OID: {e}");
+    }
     Ok(comment)
 }
 
@@ -438,7 +466,9 @@ pub fn resolve_thread(
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
     let entry = repo.append(&ref_name, &msg, tree, Some(parent))?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    let _ = index_add_comment_oid(repo, &comment.oid, thread_id);
+    if let Err(e) = index_add_comment_oid(repo, &comment.oid, thread_id) {
+        eprintln!("warning: failed to index comment OID: {e}");
+    }
     Ok(comment)
 }
 
@@ -494,7 +524,9 @@ pub fn edit_in_thread(
     )?;
     let entry = repo.append(&ref_name, &message, tree, Some(parent))?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    let _ = index_add_comment_oid(repo, &comment.oid, thread_id);
+    if let Err(e) = index_add_comment_oid(repo, &comment.oid, thread_id) {
+        eprintln!("warning: failed to index comment OID: {e}");
+    }
     Ok(comment)
 }
 
@@ -562,7 +594,9 @@ pub fn find_threads_by_object(repo: &Repository, oid: &str) -> Result<Vec<String
         return Ok(ids);
     }
 
-    // Fallback: scan tip commits of all thread refs.
+    // TODO: O(threads*comments) fallback — full-walks every thread chain
+    // on index miss. Run `rebuild_comments_index` to populate the index
+    // and avoid this path.
     let thread_ids = list_all_thread_ids(repo)?;
     let mut result = Vec::new();
     for tid in &thread_ids {

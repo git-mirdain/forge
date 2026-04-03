@@ -32,6 +32,9 @@ pub fn build_sigil_map(
 ///
 /// Parses `https://github.com/{owner}/{repo}/{url_kind}/{number}` and looks up
 /// the sigil for `(owner, repo)`. `url_kind` is `"issues"` or `"pull"`.
+//
+// TODO: hardcoded to GitHub URL patterns — non-GitHub providers (GitLab,
+// Gitea, etc.) are silently skipped during reindex.
 pub fn display_id_from_source(
     entry: &LedgerEntry,
     sigil_map: &HashMap<(String, String), String>,

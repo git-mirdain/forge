@@ -109,6 +109,13 @@ pub(crate) fn resolve_oid(
 
     // Hex string → match against known OIDs
     if is_hex(oid_or_id) && !oid_or_id.is_empty() {
+        // Short pure-numeric hex strings (< 4 chars) are ambiguous with
+        // display IDs. If the index didn't match, refuse to fall through
+        // to prefix matching — the caller likely meant a display ID.
+        if oid_or_id.len() < 4 {
+            return Err(Error::NotFound(oid_or_id.to_string()));
+        }
+
         // Exact 40-char match
         if oid_or_id.len() == 40 && known_oids.iter().any(|o| o == oid_or_id) {
             return Ok(oid_or_id.to_string());

@@ -95,6 +95,18 @@ fn issue_from_entry(entry: &LedgerEntry, display_id: Option<String>) -> Result<I
     })
 }
 
+/// Reject labels or assignees containing `/`, `\0`, `.`, or `..`.
+fn validate_label_assignee_values(labels: &[&str], assignees: &[&str]) -> Result<()> {
+    for value in labels.iter().chain(assignees.iter()) {
+        if value.contains('/') || value.contains('\0') || *value == "." || *value == ".." {
+            return Err(Error::Config(format!(
+                "invalid label/assignee {value:?}: must not contain '/', '\\0', or be '.'/'..'"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl Store<'_> {
     /// Create a new issue, writing an OID-keyed entity ref and staging it in the index.
     ///
@@ -107,6 +119,7 @@ impl Store<'_> {
         labels: &[&str],
         assignees: &[&str],
     ) -> Result<Issue> {
+        validate_label_assignee_values(labels, assignees)?;
         let label_paths: Vec<String> = labels.iter().map(|l| format!("labels/{l}")).collect();
         let assignee_paths: Vec<String> =
             assignees.iter().map(|a| format!("assignees/{a}")).collect();
@@ -165,6 +178,7 @@ impl Store<'_> {
         author: &git2::Signature<'_>,
         source: &str,
     ) -> Result<Issue> {
+        validate_label_assignee_values(labels, assignees)?;
         let label_paths: Vec<String> = labels.iter().map(|l| format!("labels/{l}")).collect();
         let assignee_paths: Vec<String> =
             assignees.iter().map(|a| format!("assignees/{a}")).collect();
@@ -267,12 +281,14 @@ impl Store<'_> {
         use crate::refs;
 
         let old_index = read_index(self.repo, ISSUE_INDEX)?;
-        let oids = self.repo.list(ISSUE_PREFIX)?;
+        let mut oids = self.repo.list(ISSUE_PREFIX)?;
+        oids.sort();
 
         // Build (owner, repo) → issue sigil from config.
         let sigil_map = crate::reindex::build_sigil_map(self.repo, "issue")?;
 
         let mut entries: Vec<(String, String)> = Vec::new();
+        let mut used_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut next_local_id = 1u64;
 
         for oid in &oids {
@@ -282,6 +298,7 @@ impl Store<'_> {
             if let Some(display_id) =
                 crate::reindex::display_id_from_source(&entry, &sigil_map, "issues")
             {
+                used_ids.insert(display_id.clone());
                 entries.push((display_id, oid.clone()));
             } else {
                 // Local issue — keep existing display ID or assign next sequential.
@@ -289,11 +306,18 @@ impl Store<'_> {
                     .as_ref()
                     .and_then(|idx| idx.iter().find(|(_, v)| v.as_str() == oid))
                     .map(|(k, _)| k.clone());
-                let display_id = existing.unwrap_or_else(|| {
+                let display_id = if let Some(id) = existing {
+                    used_ids.insert(id.clone());
+                    id
+                } else {
+                    while used_ids.contains(&next_local_id.to_string()) {
+                        next_local_id += 1;
+                    }
                     let id = next_local_id.to_string();
+                    used_ids.insert(id.clone());
                     next_local_id += 1;
                     id
-                });
+                };
                 entries.push((display_id, oid.clone()));
             }
         }
@@ -369,6 +393,12 @@ impl Store<'_> {
         }
         if let Some(url) = source_url {
             mutations.push(Mutation::Set("source/url", url.as_bytes()));
+        }
+
+        if mutations.is_empty() {
+            let entry = self.repo.read(&ref_name)?;
+            let display_id = display_id_for_oid(index.as_ref(), &oid);
+            return issue_from_entry(&entry, display_id);
         }
 
         let entry = self.repo.update(&ref_name, &mutations, "update issue")?;

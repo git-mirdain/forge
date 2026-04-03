@@ -53,18 +53,37 @@ pub fn read_config_blob(repo: &Repository, path: &str) -> Result<Option<String>>
 /// # Errors
 /// Returns an error if a git operation fails.
 pub fn write_config_blob(repo: &Repository, path: &str, value: &str) -> Result<()> {
-    let parts: Vec<&str> = path.split('/').collect();
-    let blob_oid = repo.blob(value.as_bytes())?;
+    write_config_blobs(repo, &[(path, value)])
+}
+
+/// Write multiple UTF-8 blobs under `refs/forge/config` in a single commit.
+///
+/// Each `(path, value)` pair is a slash-separated path and its content.
+///
+/// # Errors
+/// Returns an error if a git operation fails.
+pub fn write_config_blobs(repo: &Repository, entries: &[(&str, &str)]) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
 
     let parent = match repo.find_reference(CONFIG) {
         Ok(r) => Some(r.peel_to_commit()?),
         Err(e) if e.code() == ErrorCode::NotFound => None,
         Err(e) => return Err(e.into()),
     };
-    let root_tree = parent.as_ref().map(git2::Commit::tree).transpose()?;
+    let mut root_tree = parent.as_ref().map(git2::Commit::tree).transpose()?;
 
-    let root_oid = build_tree(repo, root_tree.as_ref(), &parts, blob_oid)?;
-    let root = repo.find_tree(root_oid)?;
+    for (path, value) in entries {
+        let parts: Vec<&str> = path.split('/').collect();
+        let blob_oid = repo.blob(value.as_bytes())?;
+        let root_oid = build_tree(repo, root_tree.as_ref(), &parts, blob_oid)?;
+        root_tree = Some(repo.find_tree(root_oid)?);
+    }
+
+    let Some(root) = root_tree else {
+        return Ok(());
+    };
     let sig = repo.signature()?;
     let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
     repo.commit(

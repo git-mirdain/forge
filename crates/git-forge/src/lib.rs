@@ -28,6 +28,11 @@ pub use error::{Error, Result};
 use git_ledger::{Ledger, Mutation};
 use git2::Repository;
 
+// TODO: `RemoteSync` takes `&Repository` instead of `&Store`, breaking
+// encapsulation — the sync trait can bypass Store invariants. Migrating
+// to `&Store` would also require `Send` bounds on the returned futures
+// to support concurrent sync operations.
+
 /// A handle to the forge store in a Git repository.
 pub struct Store<'a> {
     pub(crate) repo: &'a Repository,

@@ -226,36 +226,31 @@ fn read_objects_subtree(repo: &Repository, ref_name: &str) -> Vec<String> {
 /// For a commit range (`base..head`), yields every commit reachable from
 /// `head` that is not reachable from `base`.  For a single object, yields
 /// just that object.  Silently omits objects not present locally.
-fn enumerate_pins(repo: &Repository, target: &ReviewTarget) -> Vec<(String, git2::Oid, FileMode)> {
-    let Some(head_oid) = git2::Oid::from_str(&target.head).ok() else {
-        return Vec::new();
-    };
+fn enumerate_pins(
+    repo: &Repository,
+    target: &ReviewTarget,
+) -> Result<Vec<(String, git2::Oid, FileMode)>> {
+    let head_oid = git2::Oid::from_str(&target.head)?;
 
     if let Some(base_str) = &target.base {
-        let Some(base_oid) = git2::Oid::from_str(base_str).ok() else {
-            return vec![(target.head.clone(), head_oid, FileMode::Commit)];
-        };
-        let Ok(mut walk) = repo.revwalk() else {
-            return vec![(target.head.clone(), head_oid, FileMode::Commit)];
-        };
-        if walk.push(head_oid).is_err() || walk.hide(base_oid).is_err() {
-            return vec![(target.head.clone(), head_oid, FileMode::Commit)];
-        }
-        walk.flatten()
+        let base_oid = git2::Oid::from_str(base_str)?;
+        let mut walk = repo.revwalk()?;
+        walk.push(head_oid)?;
+        walk.hide(base_oid)?;
+        Ok(walk
+            .flatten()
             .map(|oid| {
                 let mode = object_mode(repo, oid);
                 (oid.to_string(), oid, mode)
             })
-            .collect()
+            .collect())
     } else {
-        let Ok(obj) = repo.find_object(head_oid, None) else {
-            return Vec::new();
-        };
-        vec![(
+        let obj = repo.find_object(head_oid, None)?;
+        Ok(vec![(
             target.head.clone(),
             head_oid,
             object_mode_from_type(obj.kind()),
-        )]
+        )])
     }
 }
 
@@ -285,7 +280,7 @@ impl Store<'_> {
         target: &ReviewTarget,
         source_ref: Option<&str>,
     ) -> Result<Review> {
-        let pins = enumerate_pins(self.repo, target);
+        let pins = enumerate_pins(self.repo, target)?;
         let pin_paths: Vec<String> = pins
             .iter()
             .map(|(s, _, _)| format!("objects/{s}"))
@@ -352,7 +347,7 @@ impl Store<'_> {
     ) -> Result<Review> {
         let state = state.cloned().unwrap_or(ReviewState::Open);
         let state_str = state.as_str().to_string();
-        let pins = enumerate_pins(self.repo, target);
+        let pins = enumerate_pins(self.repo, target)?;
         let pin_paths: Vec<String> = pins
             .iter()
             .map(|(s, _, _)| format!("objects/{s}"))
@@ -416,11 +411,13 @@ impl Store<'_> {
         use crate::refs;
 
         let old_index = read_index(self.repo, REVIEW_INDEX)?;
-        let oids = self.repo.list(REVIEW_PREFIX)?;
+        let mut oids = self.repo.list(REVIEW_PREFIX)?;
+        oids.sort();
 
         let sigil_map = crate::reindex::build_sigil_map(self.repo, "review")?;
 
         let mut entries: Vec<(String, String)> = Vec::new();
+        let mut used_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut next_local_id = 1u64;
 
         for oid in &oids {
@@ -430,17 +427,25 @@ impl Store<'_> {
             if let Some(display_id) =
                 crate::reindex::display_id_from_source(&entry, &sigil_map, "pull")
             {
+                used_ids.insert(display_id.clone());
                 entries.push((display_id, oid.clone()));
             } else {
                 let existing = old_index
                     .as_ref()
                     .and_then(|idx| idx.iter().find(|(_, v)| v.as_str() == oid))
                     .map(|(k, _)| k.clone());
-                let display_id = existing.unwrap_or_else(|| {
+                let display_id = if let Some(id) = existing {
+                    used_ids.insert(id.clone());
+                    id
+                } else {
+                    while used_ids.contains(&next_local_id.to_string()) {
+                        next_local_id += 1;
+                    }
                     let id = next_local_id.to_string();
+                    used_ids.insert(id.clone());
                     next_local_id += 1;
                     id
-                });
+                };
                 entries.push((display_id, oid.clone()));
             }
         }
@@ -501,6 +506,11 @@ impl Store<'_> {
     ///
     /// # Errors
     /// Returns [`Error::NotFound`] if the review does not exist.
+    //
+    // TOCTOU: read-then-write is not atomic. A concurrent writer can
+    // interleave between the `read` and the `update`, causing one write to
+    // silently overwrite the other. The intended fix is optimistic
+    // concurrency via an expected-parent-OID check at the ledger layer.
     pub fn update_review(
         &self,
         oid_or_id: &str,
@@ -523,6 +533,12 @@ impl Store<'_> {
         }
         if let Some(ref s) = state_bytes {
             mutations.push(Mutation::Set("state", s.as_bytes()));
+        }
+
+        if mutations.is_empty() {
+            let entry = self.repo.read(&ref_name)?;
+            let display_id = display_id_for_oid(index.as_ref(), &oid);
+            return review_from_entry(self.repo, &entry, &ref_name, display_id);
         }
 
         let entry = self.repo.update(&ref_name, &mutations, "update review")?;
@@ -559,7 +575,7 @@ impl Store<'_> {
             head: new_head.clone(),
             base: review.target.base.clone(),
         };
-        let pins = enumerate_pins(self.repo, &new_target);
+        let pins = enumerate_pins(self.repo, &new_target)?;
         let pin_paths: Vec<String> = pins
             .iter()
             .map(|(s, _, _)| format!("objects/{s}"))
@@ -597,7 +613,9 @@ impl Store<'_> {
             head: new_head.to_string(),
             base: old_review.target.base.clone(),
         };
-        let pins = enumerate_pins(self.repo, &new_target);
+        let pins = enumerate_pins(self.repo, &new_target)?;
+        let new_object_set: std::collections::HashSet<&str> =
+            pins.iter().map(|(s, _, _)| s.as_str()).collect();
         let pin_paths: Vec<String> = pins
             .iter()
             .map(|(s, _, _)| format!("objects/{s}"))
@@ -605,6 +623,16 @@ impl Store<'_> {
 
         let mut mutations: Vec<Mutation<'_>> =
             vec![Mutation::Set("target/head", new_head.as_bytes())];
+        // Delete stale object pins that are not in the new set.
+        let stale_paths: Vec<String> = old_review
+            .objects
+            .iter()
+            .filter(|o| !new_object_set.contains(o.as_str()))
+            .map(|o| format!("objects/{o}"))
+            .collect();
+        for p in &stale_paths {
+            mutations.push(Mutation::Delete(p.as_str()));
+        }
         for ((_, oid, mode), path) in pins.iter().zip(pin_paths.iter()) {
             mutations.push(Mutation::Pin(path.as_str(), *oid, *mode));
         }
@@ -719,6 +747,10 @@ impl Store<'_> {
     ///
     /// # Errors
     /// Returns an error if a git operation fails.
+    //
+    // TODO: O(n*m) — loads every review and walks every approval entry.
+    // This will hit a performance cliff once the review count grows.
+    // Needs a derived `approvals-by-oid` index to avoid the full scan.
     pub fn approved_oids(&self) -> Result<std::collections::HashSet<String>> {
         let reviews = self.list_reviews()?;
         let mut set = std::collections::HashSet::new();
