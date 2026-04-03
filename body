@@ -1,0 +1,3 @@
+**No validation of label/assignee content — path traversal in tree keys.** Labels and assignees are interpolated directly into tree paths like `labels/{l}` and `assignees/{a}`. A label containing `/` (e.g. `"bug/critical"`) creates a nested tree structure instead of a flat entry, which breaks round-tripping: `issue_from_entry` parses `labels/bug/critical` and extracts `"bug/critical"` correctly only by accident (the `n["labels/".len()..]` slice), but it means two labels `"bug"` (a tree) and `"bug/critical"` (an entry within it) cannot coexist — git trees don't allow a name to be both a tree and a blob.
+
+A label containing `\0` could cause undefined behavior in libgit2. Labels with `.` or `..` components could interact badly with path resolution.
