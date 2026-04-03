@@ -1,0 +1,5 @@
+**TOCTOU race on every mutating operation.** Every `update_*`, `approve_*`, `retarget_*`, and `revoke_*` method follows a read-then-write pattern: it reads the index, resolves the OID, reads the entry, builds mutations, then writes. Between the read and the write, another process (the sync daemon, another CLI invocation, an MCP tool call) can modify the same ref. Because `git-ledger` updates are commit-based, the second writer silently overwrites the first writer's commit — there is no compare-and-swap or lock.
+
+This is particularly dangerous for `approve_review` and `revoke_approval`: a concurrent approval + revocation can lose the approval entirely, or a concurrent retarget + approval can approve stale objects.
+
+Consider adding an optimistic-concurrency check (e.g. pass the expected parent commit OID to `Ledger::update` and fail if it changed) or at minimum a ref-level lock file.
