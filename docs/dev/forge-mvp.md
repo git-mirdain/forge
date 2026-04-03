@@ -24,17 +24,19 @@ No network required for the review itself.
 
 ## Work Items
 
-### 1. Scope forge-server to issue-only GitHub sync
+### 1. Config-driven sync scope
 
-**Why:** Reviews stay local.
-GitHub sync continues for issues only.
+**Why:** Reviews stay local; issue sync (including issue comments) continues.
+The data model and code for review sync remain intact — config controls what runs.
 
 **Changes:**
 
-- `crates/forge-server/src/main.rs`: Replace calls to `adapter.import_all()` / `adapter.export_all()` with `adapter.import_issues()` / `adapter.export_issues()`.
+- Add a `sync` config field (e.g. `sync = ["issues"]`) that controls which object types forge-server syncs.
+  Default to `["issues"]`.
+  `"all"` or `["issues", "reviews"]` re-enables full sync without code changes.
+- `crates/forge-server/src/main.rs`: Gate sync calls on the config value — call `import_issues()`/`export_issues()` when only issues are enabled, `import_all()`/`export_all()` when all are enabled.
   The underlying functions already exist separately in `forge-github`.
-- Update the log messages to reflect issue-only scope.
-- Optional: Add a `--scope` CLI flag (`issues`, `all`) defaulting to `issues`, so full sync can be re-enabled later without code changes.
+- Update log messages to reflect the configured scope.
 
 **Validation:** Run `forge-server --once` against a repo with a GitHub config.
 Confirm issues sync, reviews do not.
@@ -160,16 +162,18 @@ This is the "where am I, what's left" command.
 
 ---
 
-### 8. Push forge refs on `forge review finish`
+### 8. Sync forge refs via forge-server (push, pull, merge conflicts)
 
 **Why:** Backup and multi-machine access.
-Review artifacts should be preserved on the remote.
+Review and issue artifacts should be preserved on the remote.
+The forge CLI never pushes — forge-server owns all network I/O.
 
 **Changes:**
 
-- `crates/git-forge/src/exe.rs`, `done_review()`: After pruning the worktree, run `git push origin refs/forge/*` (or the configured remote).
-- Add `--no-push` flag to skip.
-- If push fails (no remote, no network), warn but don't error — local-first means offline is always valid.
+- `crates/forge-server`: Before importing/exporting, fetch remote forge refs and resolve any conflicts.
+  After importing/exporting, push `refs/forge/*` to the configured remote.
+- Handle merge conflicts on forge refs gracefully — log a warning and preserve both sides (or pick the newer timestamp), rather than failing the entire sync.
+- If push/pull fails (no remote, no network), warn but don't error — local-first means offline is always valid.
 
 ---
 
@@ -192,5 +196,5 @@ Work items are ordered by dependency and demo-criticality:
 4. **Item 3** (rename start/finish) — pairs with item 2
 5. **Item 4** (editor launch) — depends on item 2/3
 6. **Item 7** (bare `forge review`) — depends on context detection working
-7. **Item 1** (issue-only sync) — independent, can be done anytime
-8. **Item 8** (push refs on finish) — last, depends on the workflow being solid
+7. **Item 1** (config-driven sync scope) — independent, can be done anytime
+8. **Item 8** (server push/pull of forge refs) — pairs with item 1, depends on server sync being solid
