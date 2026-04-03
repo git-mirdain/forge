@@ -1,0 +1,5 @@
+**All git-write operations silently discarded with `let _ =`.**
+
+`create_thread`, `reply_to_thread`, and `resolve_thread` results are all discarded with `let _ =`. If these fail (e.g., ref lock contention, corrupt repo, disk full), the user gets no feedback — the draft file is already deleted (line 293), so their comment text is lost forever. The user typed a comment, saved, the file disappeared, and nothing happened.
+
+At minimum, failed writes should show an error via `client.show_message()` and the draft file should be preserved on failure so the user can retry.
