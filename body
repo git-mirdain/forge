@@ -1,0 +1,7 @@
+**`import_all` and `export_all` double-load and double-save sync state — TOCTOU data loss**
+
+`import_all` calls `import_issues()` then `import_reviews()`. Each of those independently calls `load_sync_state` at entry and `save_sync_state` at exit. But `export_all` has the same pattern with `export_issues` + `export_reviews`.
+
+The critical bug: `export_issues` loads state, mutates it, saves it. Then `export_reviews` loads state fresh, mutates *that* copy, and saves it. If `export_issues` wrote comment entries into the state, `export_reviews` will see them (it loads the saved ref). But consider a subtlety in `save_sync_state`: subtrees present in the *parent commit* but absent from the new `state` HashMap are preserved via `root_builder` inheriting from `parent_tree`. However, subtrees that *are* present in `state` are rebuilt from scratch. So if `export_issues` wrote `comments/123 → abc` and then `export_reviews` also writes comments, the `export_reviews` save will rebuild the `comments/` subtree from only its own entries, **silently dropping the comment mappings written by `export_issues`**.
+
+This is a data-loss race: the second save clobbers comment state written by the first.
