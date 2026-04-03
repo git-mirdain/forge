@@ -1,0 +1,3 @@
+**Truncating cast: `worktree_id as u32` silently discards upper bits**
+
+Even if fabricating a `Worktree` from a raw handle were valid (it isn't — see other comment), this `as u32` cast silently truncates the u64 worktree ID. If Zed ever assigns a worktree ID >= 2^32, this will silently produce a wrong handle with no error. A `u32::try_from()` with an error return would at least fail loudly.
