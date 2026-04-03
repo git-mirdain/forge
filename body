@@ -1,0 +1,7 @@
+**`save_sync_state` silently drops subtrees not mentioned in the current `state` map**
+
+The doc comment says "Subtrees not mentioned in `state` at all are preserved from the previous commit" because `root_builder` is initialized from `parent_tree`. That's true. But for subtrees that *are* mentioned, the child builder starts from `None` (line 79), meaning the subtree is rebuilt from scratch.
+
+The problem: this interacts badly with the pattern in `export_all` / `import_all` where state is loaded/saved independently per entity type. If `export_issues` adds `comments/100 → abc` and saves, then `export_reviews` loads fresh state (which now contains `comments/100`), adds `comments/200 → def`, and saves — the `comments/` subtree is rebuilt with **both** entries, which is correct. But if `export_issues` somehow fails to write a comment entry into the HashMap despite the comment being in `state` (e.g., the HashMap was loaded before the save), then that entry disappears.
+
+More concretely: the `state` HashMap returned by `load_sync_state` uses `from_utf8_lossy` on blob content. If a blob contains invalid UTF-8 (e.g., corruption), the lossy conversion changes the value, meaning the round-trip `load → save` silently mutates state data. This is a silent-corruption vector.
