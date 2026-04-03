@@ -1,0 +1,3 @@
+**Contributor operations are not atomic — multi-step edits can leave partial state.** Each contributor mutation (add name, add email, add role, etc.) is a separate commit. The `exe.rs` `run` method applies them sequentially in a loop. If `add_contributor_name` succeeds but `add_contributor_email` fails, the contributor is left in a half-updated state with no rollback mechanism.
+
+The contributor model uses raw tree manipulation rather than `git-ledger`, so it lacks even the single-commit-multiple-mutation capability that issues and reviews get from `Mutation::Set`/`Mutation::Delete`. Consider consolidating contributor edits into a single tree rebuild + commit.
