@@ -1,0 +1,3 @@
+**`handle_forge_save` skips HTML comment lines incorrectly — multi-line comments and body content lost.**
+
+The `skip_while(|l| l.starts_with("<!--"))` logic only skips lines that *start* with `<!--`. If the header comment spans multiple lines (which it doesn't currently, but the format is fragile), intermediate lines would not be skipped. More critically, if a user writes a comment body that happens to start with `<!--` (valid Markdown), those lines will be silently stripped. The stripping should target only the known header line, not any line matching a prefix pattern.
