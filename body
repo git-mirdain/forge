@@ -1,0 +1,3 @@
+**`enumerate_pins` silently degrades on error paths.** Every error in the revwalk setup (bad OID parse, push/hide failure) falls back to pinning only the head commit. This means a review created with `base..head` where `base` is a valid OID but can't be hidden (e.g. it's not an ancestor of `head`) will silently create a review with only 1 object instead of the full range. The user gets no indication that the review is incomplete.
+
+This should return `Result` and propagate errors rather than silently degrading.
