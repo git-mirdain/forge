@@ -1,0 +1,5 @@
+**Silent failure on poisoned locks throughout the server.**
+
+Every `RwLock`/`Mutex` access uses `if let Ok(...)` or `.ok()?`, silently swallowing poisoned-lock errors. If any thread panics while holding a lock, the server will silently degrade — `store_content` will stop storing, `get_content` will return `None`, `pending` operations will be lost — with no log message and no way for an operator to diagnose the problem.
+
+At minimum, poisoned locks should log a warning. Better: use `expect()` or `unwrap()` since a poisoned lock indicates a bug that should crash the process rather than silently corrupt state. The LSP protocol has no mechanism for partial degradation, so the server is already broken at that point.
