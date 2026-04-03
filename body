@@ -1,0 +1,8 @@
+**Redundant `OctocrabClient` construction on every call — wasted work and potential for inconsistent error handling**
+
+Every method in the `RemoteSync` impl constructs a fresh `OctocrabClient`. This means:
+
+1. If `GH_TOKEN` is read from the environment (the `None` path), each call re-reads the env var. A race with another thread mutating the environment (e.g. via `std::env::set_var`) could yield different tokens across calls within a single logical sync.
+2. The `Octocrab::builder()` call allocates a new HTTP client with its own connection pool each time. A single `import_all` creates *three* clients (one inside `import_all`, then `import_issues` and `import_reviews` each build another). `export_all` does the same. That is six TLS handshakes for one round-trip sync.
+
+The adapter already holds `config` — it should hold the client too, constructed once in `new()` (or lazily). The current design is wasteful and subtly racy.
