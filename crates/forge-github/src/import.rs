@@ -26,6 +26,17 @@ pub async fn import_issues(
     client: &impl GitHubClient,
 ) -> Result<SyncReport> {
     let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
+    let report = import_issues_with_state(repo, cfg, client, &mut state).await?;
+    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
+    Ok(report)
+}
+
+async fn import_issues_with_state(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+    state: &mut HashMap<String, String>,
+) -> Result<SyncReport> {
     let issues = client.fetch_issues(&cfg.owner, &cfg.repo).await?;
 
     let store = Store::new(repo);
@@ -33,6 +44,9 @@ pub async fn import_issues(
 
     for issue in &issues {
         let state_key = format!("issues/{}", issue.number);
+        // TODO: Once an issue is recorded in sync state it is always skipped,
+        // even if the upstream issue has been updated since the initial import.
+        // There is currently no update path — re-importing is a no-op.
         if state.contains_key(&state_key) {
             report.skipped += 1;
             continue;
@@ -77,15 +91,13 @@ pub async fn import_issues(
     for issue in &issues {
         if state.contains_key(&format!("issues/{}", issue.number)) {
             let comment_report =
-                import_issue_comments_with_state(repo, cfg, client, issue.number, &mut state)
-                    .await?;
+                import_issue_comments_with_state(repo, cfg, client, issue.number, state).await?;
             report.imported += comment_report.imported;
             report.skipped += comment_report.skipped;
             report.failed += comment_report.failed;
         }
     }
 
-    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
     Ok(report)
 }
 
@@ -164,6 +176,17 @@ pub async fn import_reviews(
     client: &impl GitHubClient,
 ) -> Result<SyncReport> {
     let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
+    let report = import_reviews_with_state(repo, cfg, client, &mut state).await?;
+    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
+    Ok(report)
+}
+
+async fn import_reviews_with_state(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+    state: &mut HashMap<String, String>,
+) -> Result<SyncReport> {
     let pulls = client.fetch_pulls(&cfg.owner, &cfg.repo).await?;
 
     let store = Store::new(repo);
@@ -227,15 +250,13 @@ pub async fn import_reviews(
     for pull in &pulls {
         if state.contains_key(&format!("reviews/{}", pull.number)) {
             let comment_report =
-                import_review_comments_with_state(repo, cfg, client, pull.number, &mut state)
-                    .await?;
+                import_review_comments_with_state(repo, cfg, client, pull.number, state).await?;
             report.imported += comment_report.imported;
             report.skipped += comment_report.skipped;
             report.failed += comment_report.failed;
         }
     }
 
-    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
     Ok(report)
 }
 
@@ -281,6 +302,9 @@ async fn import_review_comments_with_state(
         }
 
         let body = comment.body.as_deref().unwrap_or("");
+        // TODO: `comment.path` (the file the review comment is anchored to)
+        // is discarded here because `Anchor` only stores an OID and line
+        // range. This loses file-path context on import.
         let anchor = Anchor {
             oid: forge_review_oid.clone(),
             start_line: comment.line,
@@ -313,8 +337,10 @@ pub async fn import_all(
     cfg: &GitHubSyncConfig,
     client: &impl GitHubClient,
 ) -> Result<SyncReport> {
-    let issue_report = import_issues(repo, cfg, client).await?;
-    let review_report = import_reviews(repo, cfg, client).await?;
+    let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
+    let issue_report = import_issues_with_state(repo, cfg, client, &mut state).await?;
+    let review_report = import_reviews_with_state(repo, cfg, client, &mut state).await?;
+    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
     Ok(SyncReport {
         imported: issue_report.imported + review_report.imported,
         exported: 0,

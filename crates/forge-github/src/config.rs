@@ -23,7 +23,9 @@ pub struct GitHubSyncConfig {
     pub repo: String,
     /// Entity kind → sigil prefix (e.g. `"issue"` → `"GH#"`).
     pub sigils: BTreeMap<String, String>,
-    /// Personal access token; falls back to `GH_TOKEN` env var when `None`.
+    /// Personal access token. Never populated from the config ref; only set
+    /// programmatically or resolved from the `GH_TOKEN` env var at client
+    /// construction time. Always `None` when loaded via [`read_github_config`].
     pub token: Option<String>,
     /// Which object types to sync. Defaults to `{Issues}`.
     pub sync: BTreeSet<SyncScope>,

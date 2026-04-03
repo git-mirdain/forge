@@ -17,61 +17,55 @@ use crate::config::GitHubSyncConfig;
 pub struct GitHubAdapter {
     /// The sync configuration for this remote.
     pub config: GitHubSyncConfig,
+    /// Cached API client, constructed once from `config.token`.
+    client: OctocrabClient,
 }
 
 impl GitHubAdapter {
     /// Create a new adapter from a sync configuration.
-    #[must_use]
-    pub fn new(config: GitHubSyncConfig) -> Self {
-        Self { config }
+    ///
+    /// # Errors
+    /// Returns an error if the API client cannot be constructed (e.g. missing token).
+    pub fn new(config: GitHubSyncConfig) -> Result<Self> {
+        let client =
+            OctocrabClient::new(config.token.as_deref()).map_err(|e| Error::Sync(e.to_string()))?;
+        Ok(Self { config, client })
     }
 }
 
 impl RemoteSync for GitHubAdapter {
     async fn import_issues(&self, repo: &Repository) -> Result<SyncReport> {
-        let client = OctocrabClient::new(self.config.token.as_deref())
-            .map_err(|e| Error::Sync(e.to_string()))?;
-        import::import_issues(repo, &self.config, &client)
+        import::import_issues(repo, &self.config, &self.client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }
 
     async fn export_issues(&self, repo: &Repository) -> Result<SyncReport> {
-        let client = OctocrabClient::new(self.config.token.as_deref())
-            .map_err(|e| Error::Sync(e.to_string()))?;
-        export::export_issues(repo, &self.config, &client)
+        export::export_issues(repo, &self.config, &self.client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }
 
     async fn import_reviews(&self, repo: &Repository) -> Result<SyncReport> {
-        let client = OctocrabClient::new(self.config.token.as_deref())
-            .map_err(|e| Error::Sync(e.to_string()))?;
-        import::import_reviews(repo, &self.config, &client)
+        import::import_reviews(repo, &self.config, &self.client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }
 
     async fn export_reviews(&self, repo: &Repository) -> Result<SyncReport> {
-        let client = OctocrabClient::new(self.config.token.as_deref())
-            .map_err(|e| Error::Sync(e.to_string()))?;
-        export::export_reviews(repo, &self.config, &client)
+        export::export_reviews(repo, &self.config, &self.client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }
 
     async fn import_all(&self, repo: &Repository) -> Result<SyncReport> {
-        let client = OctocrabClient::new(self.config.token.as_deref())
-            .map_err(|e| Error::Sync(e.to_string()))?;
-        import::import_all(repo, &self.config, &client)
+        import::import_all(repo, &self.config, &self.client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }
 
     async fn export_all(&self, repo: &Repository) -> Result<SyncReport> {
-        let client = OctocrabClient::new(self.config.token.as_deref())
-            .map_err(|e| Error::Sync(e.to_string()))?;
-        export::export_all(repo, &self.config, &client)
+        export::export_all(repo, &self.config, &self.client)
             .await
             .map_err(|e| Error::Sync(e.to_string()))
     }

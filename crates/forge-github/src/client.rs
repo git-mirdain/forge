@@ -222,6 +222,9 @@ pub trait GitHubClient {
 // Production implementation
 // ---------------------------------------------------------------------------
 
+/// Maximum number of pages to fetch from any paginated GitHub API endpoint.
+const MAX_PAGES: u32 = 1000;
+
 /// Production [`GitHubClient`] backed by `octocrab`.
 pub struct OctocrabClient {
     inner: Octocrab,
@@ -250,8 +253,18 @@ impl OctocrabClient {
     }
 }
 
+/// Validate that a URL path component does not contain `/`, `..`, or `\0`.
+fn validate_path_component(name: &str, value: &str) -> Result<()> {
+    if value.contains('/') || value.contains('\0') || value.contains("..") {
+        bail!("{name} contains invalid characters: {value:?}");
+    }
+    Ok(())
+}
+
 impl GitHubClient for OctocrabClient {
     async fn fetch_issues(&self, owner: &str, repo: &str) -> Result<Vec<GhIssue>> {
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let mut page: u32 = 1;
         let mut all = Vec::new();
         loop {
@@ -269,6 +282,10 @@ impl GitHubClient for OctocrabClient {
                 break;
             }
             page += 1;
+            if page > MAX_PAGES {
+                eprintln!("forge: fetch_issues hit {MAX_PAGES}-page limit, results truncated");
+                break;
+            }
         }
         Ok(all)
     }
@@ -279,6 +296,8 @@ impl GitHubClient for OctocrabClient {
         repo: &str,
         number: u64,
     ) -> Result<Vec<GhIssueComment>> {
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let mut page: u32 = 1;
         let mut all = Vec::new();
         loop {
@@ -291,6 +310,12 @@ impl GitHubClient for OctocrabClient {
                 break;
             }
             page += 1;
+            if page > MAX_PAGES {
+                eprintln!(
+                    "forge: fetch_issue_comments hit {MAX_PAGES}-page limit, results truncated"
+                );
+                break;
+            }
         }
         Ok(all)
     }
@@ -311,6 +336,8 @@ impl GitHubClient for OctocrabClient {
             labels: &'a [String],
             assignees: &'a [String],
         }
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let payload = Payload {
             title,
             body,
@@ -347,6 +374,8 @@ impl GitHubClient for OctocrabClient {
             #[serde(skip_serializing_if = "Option::is_none")]
             assignees: Option<&'a [String]>,
         }
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         if title.is_none()
             && body.is_none()
             && state.is_none()
@@ -378,6 +407,8 @@ impl GitHubClient for OctocrabClient {
         struct Payload<'a> {
             body: &'a str,
         }
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let payload = Payload { body };
         let url = format!("/repos/{owner}/{repo}/issues/{number}/comments");
         let comment: GhIssueComment = self.inner.post(&url, Some(&payload)).await?;
@@ -385,6 +416,8 @@ impl GitHubClient for OctocrabClient {
     }
 
     async fn fetch_pulls(&self, owner: &str, repo: &str) -> Result<Vec<GhPull>> {
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let mut page: u32 = 1;
         let mut all = Vec::new();
         loop {
@@ -396,6 +429,10 @@ impl GitHubClient for OctocrabClient {
                 break;
             }
             page += 1;
+            if page > MAX_PAGES {
+                eprintln!("forge: fetch_pulls hit {MAX_PAGES}-page limit, results truncated");
+                break;
+            }
         }
         Ok(all)
     }
@@ -406,6 +443,8 @@ impl GitHubClient for OctocrabClient {
         repo: &str,
         number: u64,
     ) -> Result<Vec<GhReviewComment>> {
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let mut page: u32 = 1;
         let mut all = Vec::new();
         loop {
@@ -418,6 +457,12 @@ impl GitHubClient for OctocrabClient {
                 break;
             }
             page += 1;
+            if page > MAX_PAGES {
+                eprintln!(
+                    "forge: fetch_review_comments hit {MAX_PAGES}-page limit, results truncated"
+                );
+                break;
+            }
         }
         Ok(all)
     }
@@ -438,6 +483,8 @@ impl GitHubClient for OctocrabClient {
             head: &'a str,
             base: &'a str,
         }
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let payload = Payload {
             title,
             body,
@@ -467,6 +514,11 @@ impl GitHubClient for OctocrabClient {
             #[serde(skip_serializing_if = "Option::is_none")]
             state: Option<&'a str>,
         }
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
+        if title.is_none() && body.is_none() && state.is_none() {
+            bail!("update_pull called with no fields to update");
+        }
         let payload = Payload { title, body, state };
         let url = format!("/repos/{owner}/{repo}/pulls/{number}");
         let _: serde_json::Value = self.inner.patch(&url, Some(&payload)).await?;
@@ -491,6 +543,8 @@ impl GitHubClient for OctocrabClient {
             path: &'a str,
             line: u32,
         }
+        validate_path_component("owner", owner)?;
+        validate_path_component("repo", repo)?;
         let payload = Payload {
             body,
             commit_id,

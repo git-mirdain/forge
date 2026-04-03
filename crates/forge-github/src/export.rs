@@ -17,6 +17,11 @@ use crate::state::{load_sync_state, lookup_by_forge_oid, save_sync_state};
 ///
 /// `commit_oid` is the commit (or tree) to walk, `blob_oid` is the blob to find.
 /// Returns `None` if the object can't be resolved or the blob isn't found.
+///
+/// TODO: This walks the entire commit tree — O(n) in the number of entries —
+/// on every call. For repositories with many review comments this can be
+/// expensive. Additionally, when multiple paths share the same blob OID the
+/// result is whichever path `walk_tree` yields first, which is ambiguous.
 fn resolve_blob_path(repo: &Repository, commit_oid: &str, blob_oid: &str) -> Option<String> {
     let oid = git2::Oid::from_str(commit_oid).ok()?;
     let obj = repo.find_object(oid, None).ok()?;
@@ -34,12 +39,17 @@ fn resolve_blob_path(repo: &Repository, commit_oid: &str, blob_oid: &str) -> Opt
 }
 
 /// Returns `true` if the string looks like a branch name rather than a raw OID.
+///
+/// Any all-hex string of 7 or more characters is treated as a likely SHA and
+/// rejected, in addition to full-length (40/64) hex strings.
 fn is_branch_name(s: &str) -> bool {
-    let len = s.len();
-    if (len == 40 || len == 64) && s.chars().all(|c| c.is_ascii_hexdigit()) {
+    if s.is_empty() {
         return false;
     }
-    !s.is_empty()
+    if s.len() >= 7 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return false;
+    }
+    true
 }
 
 /// Export locally-created issues to GitHub.
@@ -56,13 +66,23 @@ pub async fn export_issues(
     client: &impl GitHubClient,
 ) -> Result<SyncReport> {
     let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
+    let report = export_issues_with_state(repo, cfg, client, &mut state).await?;
+    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
+    Ok(report)
+}
 
+async fn export_issues_with_state(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+    state: &mut HashMap<String, String>,
+) -> Result<SyncReport> {
     let store = Store::new(repo);
     let issues = store.list_issues()?;
     let mut report = SyncReport::default();
 
     for issue in &issues {
-        if lookup_by_forge_oid(&state, "issues", &issue.oid).is_some() {
+        if lookup_by_forge_oid(state, "issues", &issue.oid).is_some() {
             report.skipped += 1;
             continue;
         }
@@ -111,13 +131,12 @@ pub async fn export_issues(
 
     for issue in &issues {
         let comment_report =
-            export_issue_comments_with_state(repo, cfg, client, &issue.oid, &mut state).await?;
+            export_issue_comments_with_state(repo, cfg, client, &issue.oid, state).await?;
         report.exported += comment_report.exported;
         report.skipped += comment_report.skipped;
         report.failed += comment_report.failed;
     }
 
-    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
     Ok(report)
 }
 
@@ -198,13 +217,23 @@ pub async fn export_reviews(
     client: &impl GitHubClient,
 ) -> Result<SyncReport> {
     let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
+    let report = export_reviews_with_state(repo, cfg, client, &mut state).await?;
+    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
+    Ok(report)
+}
 
+async fn export_reviews_with_state(
+    repo: &Repository,
+    cfg: &GitHubSyncConfig,
+    client: &impl GitHubClient,
+    state: &mut HashMap<String, String>,
+) -> Result<SyncReport> {
     let store = Store::new(repo);
     let reviews = store.list_reviews()?;
     let mut report = SyncReport::default();
 
     for review in &reviews {
-        if lookup_by_forge_oid(&state, "reviews", &review.oid).is_some() {
+        if lookup_by_forge_oid(state, "reviews", &review.oid).is_some() {
             report.skipped += 1;
             continue;
         }
@@ -276,13 +305,12 @@ pub async fn export_reviews(
     // Export review comments for each synced review.
     for review in &reviews {
         let comment_report =
-            export_review_comments_with_state(repo, cfg, client, &review.oid, &mut state).await?;
+            export_review_comments_with_state(repo, cfg, client, &review.oid, state).await?;
         report.exported += comment_report.exported;
         report.skipped += comment_report.skipped;
         report.failed += comment_report.failed;
     }
 
-    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
     Ok(report)
 }
 
@@ -410,8 +438,10 @@ pub async fn export_all(
     cfg: &GitHubSyncConfig,
     client: &impl GitHubClient,
 ) -> Result<SyncReport> {
-    let issue_report = export_issues(repo, cfg, client).await?;
-    let review_report = export_reviews(repo, cfg, client).await?;
+    let mut state = load_sync_state(repo, &cfg.owner, &cfg.repo)?;
+    let issue_report = export_issues_with_state(repo, cfg, client, &mut state).await?;
+    let review_report = export_reviews_with_state(repo, cfg, client, &mut state).await?;
+    save_sync_state(repo, &cfg.owner, &cfg.repo, &state)?;
     Ok(SyncReport {
         imported: 0,
         exported: issue_report.exported + review_report.exported,

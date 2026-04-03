@@ -76,6 +76,10 @@ pub fn save_sync_state(
     for (prefix, entries) in &subtrees {
         // Each subtree is rebuilt from scratch so the saved state is authoritative
         // for that prefix; entries absent from `state` are dropped.
+        //
+        // Callers must include **all** entries for every prefix they touch.
+        // Any prefix present in `state` will have its subtree replaced entirely;
+        // omitting an entry that was previously saved under that prefix deletes it.
         let mut child_builder = repo.treebuilder(None)?;
         for (leaf, value) in entries {
             let blob_oid = repo.blob(value.as_bytes())?;
@@ -115,6 +119,11 @@ pub fn lookup_by_github_id<'a>(
 }
 
 /// Reverse-scan the state map to find the GitHub number for a given forge OID.
+///
+/// TODO: This is O(n) over the entire state map. Consider building a reverse
+/// index (`forge_oid → github_id`) for large sync states. When duplicate
+/// values exist the result is non-deterministic (whichever entry `HashMap`
+/// iteration yields first).
 #[must_use]
 #[allow(clippy::implicit_hasher)]
 pub fn lookup_by_forge_oid(
@@ -153,7 +162,16 @@ fn read_flat_subtrees(repo: &Repository, tree: &git2::Tree<'_>) -> Result<HashMa
                 && let Some(name) = leaf.name()
             {
                 let blob = repo.find_blob(leaf.id())?;
-                let value = String::from_utf8_lossy(blob.content()).into_owned();
+                let value = match std::str::from_utf8(blob.content()) {
+                    Ok(s) => s.to_owned(),
+                    Err(e) => {
+                        eprintln!(
+                            "forge: skipping sync-state entry {prefix}/{name}: \
+                             invalid UTF-8: {e}"
+                        );
+                        continue;
+                    }
+                };
                 map.insert(format!("{prefix}/{name}"), value);
             }
         }

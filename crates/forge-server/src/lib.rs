@@ -45,7 +45,10 @@ pub fn discover_adapters(repo: &Repository) -> Result<Vec<GitHubAdapter>> {
     if configs.is_empty() {
         eprintln!("forge-server: no GitHub configs found in refs/forge/config");
     }
-    Ok(configs.into_iter().map(GitHubAdapter::new).collect())
+    configs
+        .into_iter()
+        .map(|c| GitHubAdapter::new(c).map_err(Into::into))
+        .collect()
 }
 
 /// Run the sync loop with the given configuration.
