@@ -1,13 +1,13 @@
 //! GitHub sync configuration stored in `refs/forge/config`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use git_forge::refs;
 use git2::{ErrorCode, ObjectType, Repository};
 
 /// Which object types to sync.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SyncScope {
     /// Sync issues (and their comments) only.
     Issues,
@@ -25,8 +25,8 @@ pub struct GitHubSyncConfig {
     pub sigils: BTreeMap<String, String>,
     /// Personal access token; falls back to `GH_TOKEN` env var when `None`.
     pub token: Option<String>,
-    /// Which object types to sync. Defaults to `[Issues]`.
-    pub sync: Vec<SyncScope>,
+    /// Which object types to sync. Defaults to `{Issues}`.
+    pub sync: BTreeSet<SyncScope>,
 }
 
 /// Discover all GitHub sync configurations under `refs/forge/config`.
@@ -90,14 +90,14 @@ pub fn read_github_config(
     let sync_path = format!("provider/github/{owner}/{repo_name}/sync");
     let sync_map = refs::read_config_subtree(repo, &sync_path)?;
     let sync = if sync_map.is_empty() {
-        vec![SyncScope::Issues]
+        BTreeSet::from([SyncScope::Issues])
     } else {
-        let mut scopes = Vec::new();
+        let mut scopes = BTreeSet::new();
         if sync_map.contains_key("issues") {
-            scopes.push(SyncScope::Issues);
+            scopes.insert(SyncScope::Issues);
         }
         if sync_map.contains_key("reviews") {
-            scopes.push(SyncScope::Reviews);
+            scopes.insert(SyncScope::Reviews);
         }
         scopes
     };

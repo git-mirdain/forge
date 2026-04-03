@@ -2,7 +2,7 @@
 #![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::Result;
 use forge_github::client::{GhIssue, GhIssueComment, GhLabel, GhUser, GitHubClient};
@@ -180,7 +180,7 @@ fn test_config() -> GitHubSyncConfig {
         repo: "test-repo".into(),
         sigils: BTreeMap::new(),
         token: None,
-        sync: vec![],
+        sync: BTreeSet::new(),
     }
 }
 

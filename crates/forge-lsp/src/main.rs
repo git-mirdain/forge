@@ -1,7 +1,7 @@
 //! Forge LSP server — surfaces inline comments as diagnostics, inlay hints,
 //! and code actions.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 use std::time::SystemTime;
@@ -326,7 +326,8 @@ impl ForgeLanguageServer {
             return;
         };
 
-        let blob_map = head_blob_map(&repo);
+        // Collect into BTreeMap for deterministic file ordering.
+        let blob_map: BTreeMap<String, Vec<String>> = head_blob_map(&repo).into_iter().collect();
         let mut opened = 0u32;
         for (blob_oid, paths) in &blob_map {
             let tcs = comments_for_blob(&repo, blob_oid);
@@ -553,15 +554,20 @@ impl LanguageServer for ForgeLanguageServer {
 
         let mut actions: CodeActionResponse = Vec::new();
 
-        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-            title: "Open all files with unresolved comments".to_string(),
-            command: Some(Command {
+        let tcs = comments_for_blob(&repo, &blob_oid);
+        let has_unresolved = tcs.iter().any(|tc| !tc.comment.resolved);
+
+        if has_unresolved {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "Open all files with unresolved comments".to_string(),
-                command: "forge.review.open".to_string(),
-                arguments: None,
-            }),
-            ..Default::default()
-        }));
+                command: Some(Command {
+                    title: "Open all files with unresolved comments".to_string(),
+                    command: "forge.review.open".to_string(),
+                    arguments: None,
+                }),
+                ..Default::default()
+            }));
+        }
 
         actions.push(CodeActionOrCommand::CodeAction(CodeAction {
             title: "New forge comment".to_string(),
@@ -577,7 +583,6 @@ impl LanguageServer for ForgeLanguageServer {
             ..Default::default()
         }));
 
-        let tcs = comments_for_blob(&repo, &blob_oid);
         for tc in &tcs {
             let c = &tc.comment;
             if c.resolved {

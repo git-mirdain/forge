@@ -7,7 +7,7 @@
 )]
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::Result;
 use forge_github::client::{
@@ -221,7 +221,7 @@ fn test_config() -> GitHubSyncConfig {
         repo: "test-repo".into(),
         sigils: BTreeMap::new(),
         token: None,
-        sync: vec![],
+        sync: BTreeSet::new(),
     }
 }
 

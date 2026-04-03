@@ -373,17 +373,12 @@ impl Executor {
                 continue;
             };
             for tid in &thread_ids {
-                let Ok(comments) = crate::comment::list_thread_comments(&self.repo, tid) else {
-                    continue;
-                };
-                let root = comments.first();
-                if let Some(root) = root {
-                    if root.resolved {
-                        total_resolved += 1;
-                    } else {
-                        total_unresolved += 1;
-                        *unresolved_by_file.entry(path.clone()).or_default() += 1;
-                    }
+                let resolved = crate::comment::thread_is_resolved(&self.repo, tid).unwrap_or(false);
+                if resolved {
+                    total_resolved += 1;
+                } else {
+                    total_unresolved += 1;
+                    *unresolved_by_file.entry(path.clone()).or_default() += 1;
                 }
             }
         }
@@ -774,6 +769,7 @@ fn launch_editor(path: &std::path::Path) -> Result<()> {
         });
 
     let Some(editor) = editor else {
+        eprintln!("No editor found. Set $FORGE_EDITOR, $VISUAL, or $EDITOR.");
         return Ok(());
     };
 
@@ -782,7 +778,7 @@ fn launch_editor(path: &std::path::Path) -> Result<()> {
         .and_then(|n| n.to_str())
         .unwrap_or(&editor);
 
-    let is_gui = gui_editors.iter().any(|g| name.contains(g));
+    let is_gui = gui_editors.contains(&name);
 
     if is_gui {
         std::process::Command::new(&editor)
@@ -805,8 +801,21 @@ fn launch_editor(path: &std::path::Path) -> Result<()> {
 }
 
 fn which(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(name).is_file()))
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| is_executable(&dir.join(name)))
+    })
+}
+
+fn is_executable(path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
 }
 
 fn parse_remote_url(url: &str) -> Result<(String, String, String)> {

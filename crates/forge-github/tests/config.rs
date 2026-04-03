@@ -1,6 +1,8 @@
 //! Integration tests for `forge_github::config` discovery and round-trip.
 #![allow(clippy::must_use_candidate, clippy::missing_panics_doc, missing_docs)]
 
+use std::collections::BTreeSet;
+
 use forge_github::config::{
     GitHubSyncConfig, SyncScope, discover_github_configs, read_github_config, write_github_config,
 };
@@ -36,7 +38,7 @@ fn config_with_sigils(owner: &str, repo_name: &str, sigils: &[(&str, &str)]) -> 
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
         token: None,
-        sync: vec![],
+        sync: BTreeSet::new(),
     }
 }
 
@@ -200,21 +202,50 @@ fn discover_config_sigils_are_correct_per_repo() {
 fn write_then_read_sync_scopes() {
     let (_dir, repo) = test_repo();
     let mut cfg = config_with_sigils("org", "repo", &[]);
-    cfg.sync = vec![SyncScope::Issues, SyncScope::Reviews];
+    cfg.sync = BTreeSet::from([SyncScope::Issues, SyncScope::Reviews]);
     write_github_config(&repo, &cfg).unwrap();
 
     let loaded = read_github_config(&repo, "org", "repo").unwrap();
-    assert_eq!(loaded.sync, vec![SyncScope::Issues, SyncScope::Reviews]);
+    assert_eq!(
+        loaded.sync,
+        BTreeSet::from([SyncScope::Issues, SyncScope::Reviews])
+    );
 }
 
 #[test]
 fn sync_scope_defaults_to_issues_when_absent() {
     let (_dir, repo) = test_repo();
-    // Write config without sync scope (empty vec → no sync subtree entries).
+    // Write config without sync scope (empty set → no sync subtree entries).
     let cfg = config_with_sigils("org", "repo", &[("issue", "GH#")]);
     write_github_config(&repo, &cfg).unwrap();
 
     let loaded = read_github_config(&repo, "org", "repo").unwrap();
-    // Empty sync subtree should default to [Issues].
-    assert_eq!(loaded.sync, vec![SyncScope::Issues]);
+    // Empty sync subtree should default to {Issues}.
+    assert_eq!(loaded.sync, BTreeSet::from([SyncScope::Issues]));
+}
+
+// ---------------------------------------------------------------------------
+// write_github_config preserves sibling repos
+// ---------------------------------------------------------------------------
+
+#[test]
+fn write_config_preserves_sibling_repos() {
+    let (_dir, repo) = test_repo();
+    let cfg_a = config_with_sigils("org", "repo-a", &[("issue", "A#")]);
+    write_github_config(&repo, &cfg_a).unwrap();
+
+    let mut cfg_b = config_with_sigils("org", "repo-b", &[("issue", "B#")]);
+    cfg_b.sync = BTreeSet::from([SyncScope::Issues, SyncScope::Reviews]);
+    write_github_config(&repo, &cfg_b).unwrap();
+
+    // repo-a should still be intact after writing repo-b.
+    let loaded_a = read_github_config(&repo, "org", "repo-a").unwrap();
+    assert_eq!(loaded_a.sigils.get("issue").map(String::as_str), Some("A#"));
+
+    let loaded_b = read_github_config(&repo, "org", "repo-b").unwrap();
+    assert_eq!(loaded_b.sigils.get("issue").map(String::as_str), Some("B#"));
+    assert_eq!(
+        loaded_b.sync,
+        BTreeSet::from([SyncScope::Issues, SyncScope::Reviews])
+    );
 }
