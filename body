@@ -1,0 +1,12 @@
+**Unsound: fabricating a `Worktree` resource from a worktree ID**
+
+`worktree_ids()` returns semantic worktree IDs (`list<u64>` per the WIT contract). `Worktree::from_handle` expects a WIT *resource handle* — an opaque integer the host uses to track resource ownership. These are completely different namespaces.
+
+This code takes a worktree ID, truncates it to u32, and constructs a `Worktree` resource handle from it. There is no guarantee that the worktree ID numerically equals the resource handle for that worktree. In practice this is likely to:
+
+1. Produce a handle pointing at the wrong object (or no object at all)
+2. Cause a double-drop when the fabricated `Worktree` value is dropped — the host will try to destroy a resource it didn't create, or destroy the real worktree resource a second time
+
+The `context_server_command` API intentionally gives you `&Project`, not `&Worktree`. If you need to probe each worktree for a binary, the correct approach is either:
+- Upstream an API addition to `zed_extension_api` that lets you iterate worktrees from a `Project` (e.g. `project.worktrees() -> Vec<Worktree>`)
+- Or use a different strategy entirely — e.g. `project`-level `which()` or shell-env if the API supports it
