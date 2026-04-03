@@ -1,0 +1,5 @@
+**Hardcoded language list is incomplete and unmaintainable**
+
+The language list is a manually curated snapshot. It misses common languages (e.g. Lua, Dart, Scala, OCaml, Nix, Dockerfile, Terraform/HCL, PHP, R, C#, F#) and will silently fail to attach the LSP for any unlisted language. Since forge-lsp works on git-object-anchored comments that can appear on any file type, there's no reason to restrict it.
+
+Consider whether Zed supports a wildcard or `"*"` pattern here. If not, this list needs to be kept in sync with whatever languages Zed knows about, which is a maintenance cost that will inevitably drift.
