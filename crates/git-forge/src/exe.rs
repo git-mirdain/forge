@@ -2332,7 +2332,7 @@ fn print_comment(comment: &Comment, json: bool) {
     }
     if !comment.body.is_empty() {
         println!();
-        println!("{}", comment.body);
+        println!("{}", render_markdown(&comment.body));
     }
 }
 
@@ -2362,6 +2362,16 @@ fn print_comment_list(comments: &[Comment]) {
     }
 }
 
+#[cfg(feature = "cli")]
+fn render_markdown(text: &str) -> String {
+    format!("{}", termimad::inline(text))
+}
+
+#[cfg(not(feature = "cli"))]
+fn render_markdown(text: &str) -> String {
+    text.to_string()
+}
+
 fn print_issue(issue: &Issue, json: bool) {
     if json {
         println!(
@@ -2383,7 +2393,7 @@ fn print_issue(issue: &Issue, json: bool) {
     }
     if !issue.body.is_empty() {
         println!();
-        println!("{}", issue.body);
+        println!("{}", render_markdown(&issue.body));
     }
 }
 
@@ -2508,7 +2518,7 @@ fn print_review(review: &Review, json: bool) {
     }
     if !review.body.is_empty() {
         println!();
-        println!("{}", review.body);
+        println!("{}", render_markdown(&review.body));
     }
 }
 

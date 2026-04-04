@@ -15,7 +15,7 @@ required-features = ["cli"]
 [features]
 default = ["cli", "exe", "server"]
 exe = ["dep:facet-json"]
-cli = ["exe", "dep:clap", "dep:inquire", "dep:comfy-table"]
+cli = ["exe", "dep:clap", "dep:inquire", "dep:comfy-table", "dep:termimad"]
 server = ["cli"]
 
 [dependencies]
@@ -30,6 +30,7 @@ uuid = { workspace = true }
 clap = { workspace = true, optional = true }
 inquire = { workspace = true, optional = true }
 comfy-table = { workspace = true, optional = true }
+termimad = { version = "0.34", optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
