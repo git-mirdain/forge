@@ -1561,7 +1561,8 @@ impl Executor {
                     let store = self.store();
                     let issues = store.reindex_issues()?;
                     let reviews = store.reindex_reviews()?;
-                    eprintln!("reindexed {issues} issues, {reviews} reviews");
+                    crate::comment::rebuild_comments_index(store.repo)?;
+                    eprintln!("reindexed {issues} issues, {reviews} reviews, and comments");
                 }
             },
 
