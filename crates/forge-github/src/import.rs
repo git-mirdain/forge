@@ -222,6 +222,7 @@ async fn import_reviews_with_state(
         let target = ReviewTarget {
             head: pull.head.sha.clone(),
             base: Some(pull.base.sha.clone()),
+            path: None,
         };
         let source_ref = Some(pull.head.ref_field.as_str());
 

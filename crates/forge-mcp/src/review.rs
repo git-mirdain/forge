@@ -199,6 +199,7 @@ impl ForgeMcpServer {
         let target = ReviewTarget {
             head: params.head,
             base: params.base,
+            path: None,
         };
         match store.create_review(
             &params.title,

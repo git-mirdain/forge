@@ -196,9 +196,31 @@ impl Executor {
     ///
     /// # Errors
     /// Returns an error if the review does not exist or a git operation fails.
-    pub fn retarget_review(&self, reference: &str, new_head: &str) -> Result<Review> {
-        let resolved_head = resolve_to_oid(&self.repo, new_head)?;
-        let (_, review) = self.store().retarget_review(reference, &resolved_head)?;
+    pub fn retarget_review(
+        &self,
+        reference: &str,
+        head: Option<&str>,
+        path: Option<&str>,
+    ) -> Result<Review> {
+        let (resolved_head, resolved_path) = match (head, path) {
+            (Some(h), p) => (resolve_to_oid(&self.repo, h)?, p.map(str::to_string)),
+            (None, Some(p)) => (
+                resolve_to_oid(&self.repo, &format!("HEAD:{p}"))?,
+                Some(p.to_string()),
+            ),
+            (None, None) => {
+                let review = self.store().get_review(reference)?;
+                let spec = review
+                    .target
+                    .path
+                    .as_deref()
+                    .map_or_else(|| "HEAD".to_string(), |p| format!("HEAD:{p}"));
+                (resolve_to_oid(&self.repo, &spec)?, review.target.path)
+            }
+        };
+        let (_, review) =
+            self.store()
+                .retarget_review(reference, &resolved_head, resolved_path.as_deref())?;
         Ok(review)
     }
 
@@ -1717,6 +1739,7 @@ impl Executor {
                     let target = ReviewTarget {
                         head: head_oid,
                         base: base_oid,
+                        path: None,
                     };
                     let review = self.create_review(title, body, &target, source_ref.as_deref())?;
                     print_review(&review, cli.json);
@@ -1903,8 +1926,13 @@ impl Executor {
                     }
                 }
 
-                ReviewCommand::Retarget { reference, head } => {
-                    let review = self.retarget_review(reference, head)?;
+                ReviewCommand::Retarget {
+                    reference,
+                    head,
+                    path,
+                } => {
+                    let review =
+                        self.retarget_review(reference, head.as_deref(), path.as_deref())?;
                     if cli.json {
                         print_review(&review, true);
                     } else {
@@ -1912,7 +1940,7 @@ impl Executor {
                             .display_id
                             .as_deref()
                             .unwrap_or(&review.oid[..review.oid.len().min(12)]);
-                        println!("Retargeted review {label} to {}", &head);
+                        println!("Retargeted review {label} to {}", &review.target.head);
                     }
                 }
             },

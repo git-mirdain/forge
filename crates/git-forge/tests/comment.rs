@@ -388,6 +388,7 @@ fn executor_retarget_does_not_migrate_comments() {
     let target = git_forge::review::ReviewTarget {
         head: old_tree,
         base: None,
+        path: None,
     };
     let review = exec.create_review("r", "", &target, None).unwrap();
 
@@ -399,7 +400,8 @@ fn executor_retarget_does_not_migrate_comments() {
     exec.create_comment("on line 2", Some(&anchor), None)
         .unwrap();
 
-    exec.retarget_review(&review.oid, &new_tree).unwrap();
+    exec.retarget_review(&review.oid, Some(&new_tree), None)
+        .unwrap();
 
     // Comments are still anchored to old_blob_oid — NOT migrated.
     let old_comments = exec.list_comments_on(&old_blob_oid).unwrap();

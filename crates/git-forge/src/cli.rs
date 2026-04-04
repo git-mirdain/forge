@@ -521,9 +521,14 @@ pub enum ReviewCommand {
         /// Display ID or OID prefix.
         reference: String,
 
-        /// New head object OID or ref.
-        #[arg(long)]
-        head: String,
+        /// New head object OID or ref (conflicts with --path).
+        #[arg(long, conflicts_with = "path")]
+        head: Option<String>,
+
+        /// Workspace-relative path to resolve against HEAD, e.g. `crates/git-forge`.
+        /// Also stores the path on the review for future no-argument retargets.
+        #[arg(long, conflicts_with = "head")]
+        path: Option<String>,
     },
 }
 

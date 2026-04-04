@@ -282,6 +282,7 @@ fn checkout_review_creates_parent_dir_only() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = exec
         .create_review("checkout test", "", &target, None)
@@ -306,6 +307,7 @@ fn checkout_review_recovers_from_stale_admin_dir() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = exec.create_review("stale test", "", &target, None).unwrap();
 
@@ -334,6 +336,7 @@ fn checkout_review_idempotent() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = exec
         .create_review("idempotent test", "", &target, None)
@@ -360,6 +363,7 @@ fn checkout_done_recheckout() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = exec
         .create_review("roundtrip test", "", &target, None)
@@ -413,13 +417,16 @@ fn retarget_updates_head() {
     let target = ReviewTarget {
         head: old_tree.clone(),
         base: None,
+        path: None,
     };
     let review = exec
         .create_review("test review", "", &target, None)
         .unwrap();
 
     let new_tree = make_tree(&repo, "lib.rs", "fn main() { todo!() }\n");
-    let updated = exec.retarget_review(&review.oid, &new_tree).unwrap();
+    let updated = exec
+        .retarget_review(&review.oid, Some(&new_tree), None)
+        .unwrap();
     assert_eq!(updated.target.head, new_tree);
     assert_ne!(updated.target.head, old_tree);
 }

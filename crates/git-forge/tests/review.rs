@@ -50,6 +50,7 @@ fn create_returns_oid() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("PR title", "description", &target, None)
@@ -67,6 +68,7 @@ fn create_stores_all_fields() {
     let target = ReviewTarget {
         head: commit.clone(),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("My review", "detailed body", &target, None)
@@ -97,6 +99,7 @@ fn create_with_commit_range_target() {
     let target = ReviewTarget {
         head: commit2.clone(),
         base: Some(commit.clone()),
+        path: None,
     };
     let review = store
         .create_review("Range review", "", &target, None)
@@ -115,6 +118,7 @@ fn create_with_single_blob_target() {
     let target = ReviewTarget {
         head: blob.clone(),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("Blob review", "", &target, None)
@@ -130,6 +134,7 @@ fn create_with_source_ref() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("Branch review", "", &target, Some("feature-branch"))
@@ -145,6 +150,7 @@ fn objects_tree_pins_target() {
     let target = ReviewTarget {
         head: commit.clone(),
         base: None,
+        path: None,
     };
     let review = store.create_review("Pin test", "", &target, None).unwrap();
 
@@ -167,6 +173,7 @@ fn get_review_roundtrip() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let created = store
         .create_review("Roundtrip", "body", &target, Some("main"))
@@ -187,6 +194,7 @@ fn list_reviews() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     store.create_review("Alpha", "", &target, None).unwrap();
     store.create_review("Beta", "", &target, None).unwrap();
@@ -209,6 +217,7 @@ fn update_title_and_body() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let created = store
         .create_review("Old", "old body", &target, None)
@@ -229,6 +238,7 @@ fn update_state_to_closed() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let created = store.create_review("PR", "", &target, None).unwrap();
 
@@ -248,6 +258,7 @@ fn update_state_to_merged() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let created = store.create_review("PR", "", &target, None).unwrap();
 
@@ -264,6 +275,7 @@ fn list_reviews_by_state() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let to_close = store.create_review("Close me", "", &target, None).unwrap();
     store.create_review("Keep open", "", &target, None).unwrap();
@@ -292,6 +304,7 @@ fn refresh_target_updates_objects() {
     let target = ReviewTarget {
         head: old_head.clone(),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("Refresh", "", &target, Some("refs/heads/main"))
@@ -323,6 +336,7 @@ fn refresh_noop_without_ref() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = store.create_review("No ref", "", &target, None).unwrap();
 
@@ -375,6 +389,7 @@ fn pin_entry_blob_references_actual_object() {
     let target = ReviewTarget {
         head: blob.clone(),
         base: None,
+        path: None,
     };
     let review = store.create_review("Blob pin", "", &target, None).unwrap();
 
@@ -396,6 +411,7 @@ fn pin_entry_commit_references_actual_object() {
     let target = ReviewTarget {
         head: commit.clone(),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("Commit pin", "", &target, None)
@@ -423,6 +439,7 @@ fn create_review_imported_with_state() {
     let target = ReviewTarget {
         head: commit,
         base: None,
+        path: None,
     };
     let author = git2::Signature::now("bot", "bot@test.com").unwrap();
     let review = store
@@ -452,6 +469,7 @@ fn create_review_imported_preserves_base() {
     let target = ReviewTarget {
         head: commit,
         base: Some(base_blob.clone()),
+        path: None,
     };
     let author = git2::Signature::now("bot", "bot@test.com").unwrap();
     let review = store
@@ -484,6 +502,7 @@ fn approve_review_records_all_objects() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("Approve me", "", &target, None)
@@ -507,6 +526,7 @@ fn approve_review_object_single() {
     let target = ReviewTarget {
         head: commit.clone(),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("Single obj", "", &target, None)
@@ -528,6 +548,7 @@ fn approve_review_object_not_in_objects_errors() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = store.create_review("Test", "", &target, None).unwrap();
 
@@ -544,6 +565,7 @@ fn revoke_approval_removes_entries() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     let review = store.create_review("Revoke", "", &target, None).unwrap();
 

@@ -386,6 +386,7 @@ async fn export_review_creates_github_pr() {
     let target = ReviewTarget {
         head: commit.clone(),
         base: None,
+        path: None,
     };
     let created = store
         .create_review("Local PR", "details", &target, Some("feature"))
@@ -425,6 +426,7 @@ async fn export_review_comments() {
     let target = ReviewTarget {
         head: commit,
         base: None,
+        path: None,
     };
     let review = store
         .create_review("PR", "", &target, Some("feature"))
@@ -462,6 +464,7 @@ async fn roundtrip_reviews_no_duplicates() {
     let target = ReviewTarget {
         head: commit,
         base: None,
+        path: None,
     };
     store
         .create_review("Local PR", "body", &target, Some("feature"))
@@ -544,6 +547,7 @@ async fn export_anchored_review_comment_uses_review_api() {
     let target = ReviewTarget {
         head: commit_oid.clone(),
         base: None,
+        path: None,
     };
     let review = store
         .create_review("PR", "", &target, Some("feature"))
@@ -581,6 +585,7 @@ async fn export_review_without_source_ref_is_unexportable() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     store
         .create_review("No branch", "body", &target, None)
@@ -603,6 +608,7 @@ async fn export_review_with_sha_source_ref_is_unexportable() {
     let target = ReviewTarget {
         head: commit.clone(),
         base: None,
+        path: None,
     };
     store
         .create_review("SHA ref", "body", &target, Some(&commit))
@@ -625,6 +631,7 @@ async fn export_review_with_branch_source_ref_succeeds() {
     let target = ReviewTarget {
         head: head_oid(&repo),
         base: None,
+        path: None,
     };
     store
         .create_review("Branch PR", "body", &target, Some("my-feature"))

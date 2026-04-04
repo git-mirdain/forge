@@ -84,6 +84,9 @@ pub struct ReviewTarget {
     pub head: String,
     /// The base object OID (optional — absent for single-object reviews).
     pub base: Option<String>,
+    /// Workspace-relative path this review is scoped to (e.g. `"crates/git-forge"`).
+    /// When set, `retarget` with no explicit head resolves `HEAD:<path>` automatically.
+    pub path: Option<String>,
 }
 
 /// Per-OID approval coverage within a review.
@@ -136,6 +139,7 @@ fn review_from_entry(
     let mut source_ref: Option<String> = None;
     let mut head = String::new();
     let mut base: Option<String> = None;
+    let mut path: Option<String> = None;
     let mut labels = Vec::new();
     let mut assignees = Vec::new();
     // approvals/<oid>/<contributor-uuid> — collect all entries
@@ -151,6 +155,7 @@ fn review_from_entry(
             "source_ref" => source_ref = Some(text()),
             "target/head" => head = text(),
             "target/base" => base = Some(text()),
+            "target/path" => path = Some(text()),
             n if n.starts_with("labels/") => {
                 labels.push(n["labels/".len()..].to_string());
             }
@@ -183,7 +188,7 @@ fn review_from_entry(
         oid: entry.id.clone(),
         display_id,
         title,
-        target: ReviewTarget { head, base },
+        target: ReviewTarget { head, base, path },
         source_ref,
         state,
         body,
@@ -574,6 +579,7 @@ impl Store<'_> {
         let new_target = ReviewTarget {
             head: new_head.clone(),
             base: review.target.base.clone(),
+            path: review.target.path.clone(),
         };
         let pins = enumerate_pins(self.repo, &new_target)?;
         let pin_paths: Vec<String> = pins
@@ -599,7 +605,12 @@ impl Store<'_> {
     ///
     /// # Errors
     /// Returns an error if the review does not exist or a git operation fails.
-    pub fn retarget_review(&self, oid_or_id: &str, new_head: &str) -> Result<(String, Review)> {
+    pub fn retarget_review(
+        &self,
+        oid_or_id: &str,
+        new_head: &str,
+        new_path: Option<&str>,
+    ) -> Result<(String, Review)> {
         let index = read_index(self.repo, REVIEW_INDEX)?;
         let known_oids = self.repo.list(REVIEW_PREFIX)?;
         let oid = resolve_oid(index.as_ref(), &known_oids, oid_or_id)?;
@@ -609,9 +620,14 @@ impl Store<'_> {
         let old_review = review_from_entry(self.repo, &entry, &ref_name, display_id.clone())?;
         let old_head = old_review.target.head.clone();
 
+        let path = new_path
+            .map(str::to_string)
+            .or(old_review.target.path.clone());
+
         let new_target = ReviewTarget {
             head: new_head.to_string(),
             base: old_review.target.base.clone(),
+            path: path.clone(),
         };
         let pins = enumerate_pins(self.repo, &new_target)?;
         let new_object_set: std::collections::HashSet<&str> =
@@ -623,6 +639,9 @@ impl Store<'_> {
 
         let mut mutations: Vec<Mutation<'_>> =
             vec![Mutation::Set("target/head", new_head.as_bytes())];
+        if let Some(ref p) = path {
+            mutations.push(Mutation::Set("target/path", p.as_bytes()));
+        }
         // Delete stale object pins that are not in the new set.
         let stale_paths: Vec<String> = old_review
             .objects
