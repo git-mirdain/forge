@@ -1670,7 +1670,8 @@ impl Executor {
                             facet_json::to_string_pretty(&comments).expect("serialize")
                         );
                     } else {
-                        print_comment_list(&comments);
+                        let color = std::io::stdout().is_terminal();
+                        print_comment_list(&comments, color);
                     }
                 }
 
@@ -1684,7 +1685,8 @@ impl Executor {
                             facet_json::to_string_pretty(&comments).expect("serialize")
                         );
                     } else {
-                        print_comment_list(&comments);
+                        let color = std::io::stdout().is_terminal();
+                        print_comment_list(&comments, color);
                     }
                 }
             },
@@ -2365,30 +2367,65 @@ fn print_comment(comment: &Comment, json: bool) {
     }
 }
 
-fn print_comment_list(comments: &[Comment]) {
+fn print_comment_list(comments: &[Comment], color: bool) {
+    use comfy_table::{Cell, Table};
+
     if comments.is_empty() {
         println!("No comments.");
         return;
     }
-    println!("{} comment(s)\n", comments.len());
+
+    println!("Showing {} comments\n", comments.len());
+
+    let mut table = Table::new();
+    table.load_preset(comfy_table::presets::NOTHING);
+
     for c in comments {
         let short = &c.oid[..c.oid.len().min(8)];
-        let reply_marker = if c.reply_to.is_some() { "↳ " } else { "" };
-        let resolved_marker = if c.resolved { " [resolved]" } else { "" };
-        println!("{reply_marker}{short}{resolved_marker}  {}", c.author_name);
-        if !c.body.is_empty() {
-            let preview: String = c
-                .body
+        let preview: String = render_markdown(
+            &c.body
                 .lines()
                 .next()
                 .unwrap_or("")
                 .chars()
                 .take(72)
-                .collect();
-            println!("  {preview}");
-        }
-        println!();
+                .collect::<String>(),
+        );
+
+        let (id_str, author_str) = if color {
+            let dim = "\x1b[2m";
+            let reset = "\x1b[0m";
+            let yellow = "\x1b[33m";
+            let reply_prefix = if c.reply_to.is_some() {
+                format!("{dim}↳{reset} ")
+            } else {
+                String::new()
+            };
+            let resolved_suffix = if c.resolved {
+                format!(" {dim}[resolved]{reset}")
+            } else {
+                String::new()
+            };
+            (
+                format!("{reply_prefix}{dim}{short}{reset}{resolved_suffix}"),
+                format!("{yellow}{}{reset}", c.author_name),
+            )
+        } else {
+            let reply_prefix = if c.reply_to.is_some() { "↳ " } else { "" };
+            let resolved_suffix = if c.resolved { " [resolved]" } else { "" };
+            (
+                format!("{reply_prefix}{short}{resolved_suffix}"),
+                c.author_name.clone(),
+            )
+        };
+
+        table.add_row(vec![
+            Cell::new(&id_str),
+            Cell::new(author_str),
+            Cell::new(preview),
+        ]);
     }
+    println!("{table}");
 }
 
 #[cfg(feature = "cli")]
