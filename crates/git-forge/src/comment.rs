@@ -383,12 +383,6 @@ pub fn create_thread(
     let tree = build_comment_tree(repo, body, anchor, context_lines)?;
     let entry = repo.append(&ref_name, &message, tree, None)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    if let Err(e) = index_add_comment_oid(repo, &comment.oid, &thread_id) {
-        eprintln!("warning: failed to index comment OID: {e}");
-    }
-    if let Err(e) = index_add_anchor(repo, anchor_oid_str, &thread_id) {
-        eprintln!("warning: failed to index anchor OID: {e}");
-    }
     Ok((thread_id, comment))
 }
 
@@ -429,9 +423,6 @@ pub fn reply_to_thread(
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
     let entry = repo.append(&ref_name, &message, tree, Some(parent))?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    if let Err(e) = index_add_comment_oid(repo, &comment.oid, thread_id) {
-        eprintln!("warning: failed to index comment OID: {e}");
-    }
     Ok(comment)
 }
 
@@ -466,9 +457,6 @@ pub fn resolve_thread(
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
     let entry = repo.append(&ref_name, &msg, tree, Some(parent))?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    if let Err(e) = index_add_comment_oid(repo, &comment.oid, thread_id) {
-        eprintln!("warning: failed to index comment OID: {e}");
-    }
     Ok(comment)
 }
 
@@ -524,9 +512,6 @@ pub fn edit_in_thread(
     )?;
     let entry = repo.append(&ref_name, &message, tree, Some(parent))?;
     let comment = comment_from_chain_entry(repo, &entry)?;
-    if let Err(e) = index_add_comment_oid(repo, &comment.oid, thread_id) {
-        eprintln!("warning: failed to index comment OID: {e}");
-    }
     Ok(comment)
 }
 
@@ -624,122 +609,6 @@ pub fn find_threads_by_object(repo: &Repository, oid: &str) -> Result<Vec<String
 // ---------------------------------------------------------------------------
 // Index
 // ---------------------------------------------------------------------------
-
-/// Update or insert a single leaf in a fanout index tree and commit.
-///
-/// `make_content` receives the existing blob content (empty string if absent)
-/// and returns the new blob content to write.
-fn index_update_leaf(
-    repo: &Repository,
-    index_ref: &str,
-    oid_key: &str,
-    make_content: impl FnOnce(&str) -> String,
-    commit_msg: &str,
-) -> Result<()> {
-    if oid_key.len() < 3 {
-        return Ok(());
-    }
-    let (prefix, rest) = oid_key.split_at(2);
-    let sig = repo.signature()?;
-
-    let existing_root = repo
-        .find_reference(index_ref)
-        .ok()
-        .and_then(|r| r.peel_to_commit().ok())
-        .and_then(|c| c.tree().ok());
-
-    // Read existing leaf content.
-    let existing_content = existing_root.as_ref().and_then(|root| {
-        let dir_entry = root.get_name(prefix)?;
-        if dir_entry.kind() != Some(ObjectType::Tree) {
-            return None;
-        }
-        let dir_tree = repo.find_tree(dir_entry.id()).ok()?;
-        let leaf_entry = dir_tree.get_name(rest)?;
-        if leaf_entry.kind() != Some(ObjectType::Blob) {
-            return None;
-        }
-        let blob = repo.find_blob(leaf_entry.id()).ok()?;
-        String::from_utf8(blob.content().to_vec()).ok()
-    });
-
-    let new_content = make_content(existing_content.as_deref().unwrap_or(""));
-    let blob_oid = repo.blob(new_content.as_bytes())?;
-
-    // Build updated prefix subtree.
-    let existing_dir = existing_root.as_ref().and_then(|root| {
-        let e = root.get_name(prefix)?;
-        if e.kind() != Some(ObjectType::Tree) {
-            return None;
-        }
-        repo.find_tree(e.id()).ok()
-    });
-    let mut dir_builder = if let Some(ref dir) = existing_dir {
-        repo.treebuilder(Some(dir))?
-    } else {
-        repo.treebuilder(None)?
-    };
-    dir_builder.insert(rest, blob_oid, 0o100_644)?;
-    let dir_oid = dir_builder.write()?;
-
-    // Build updated root tree.
-    let mut root_builder = if let Some(ref root) = existing_root {
-        repo.treebuilder(Some(root))?
-    } else {
-        repo.treebuilder(None)?
-    };
-    root_builder.insert(prefix, dir_oid, 0o040_000)?;
-    let root_oid = root_builder.write()?;
-    let root_tree = repo.find_tree(root_oid)?;
-
-    let parent = repo
-        .find_reference(index_ref)
-        .ok()
-        .and_then(|r| r.peel_to_commit().ok());
-    let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
-    repo.commit(
-        Some(index_ref),
-        &sig,
-        &sig,
-        commit_msg,
-        &root_tree,
-        &parents,
-    )?;
-    Ok(())
-}
-
-/// Add a comment OID → thread UUID mapping to the comments-by-comment index.
-fn index_add_comment_oid(repo: &Repository, comment_oid: &str, thread_id: &str) -> Result<()> {
-    let tid = thread_id.to_string();
-    index_update_leaf(
-        repo,
-        COMMENTS_BY_COMMENT_INDEX,
-        comment_oid,
-        |_| format!("{tid}\n"),
-        "forge: index comment",
-    )
-}
-
-/// Add an anchor OID → thread UUID mapping to the comments-by-object index.
-fn index_add_anchor(repo: &Repository, anchor_oid: &str, thread_id: &str) -> Result<()> {
-    if anchor_oid.is_empty() {
-        return Ok(());
-    }
-    let tid = thread_id.to_string();
-    index_update_leaf(
-        repo,
-        COMMENTS_INDEX,
-        anchor_oid,
-        |existing| {
-            if existing.lines().any(|l| l == tid) {
-                existing.to_string()
-            } else {
-                format!("{existing}{tid}\n")
-            }
-        },
-        "forge: index comment thread",
-    )
-}
 
 /// Rebuild the `refs/forge/index/comments-by-object` index from scratch.
 ///
