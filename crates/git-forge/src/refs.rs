@@ -6,10 +6,8 @@ use git2::{ErrorCode, ObjectType, Repository};
 
 use crate::Result;
 
-/// Entity ref prefix for contributors.
-pub const CONTRIBUTORS_PREFIX: &str = "refs/forge/contributors/";
-/// Entity ref prefix for tools.
-pub const TOOLS_PREFIX: &str = "refs/forge/tools/";
+/// Entity ref prefix for actors (humans and tools).
+pub const ACTORS_PREFIX: &str = "refs/forge/actors/";
 /// Entity ref prefix for issues.
 pub const ISSUE_PREFIX: &str = "refs/forge/issue/";
 /// Entity ref prefix for reviews.

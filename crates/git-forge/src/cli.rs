@@ -30,11 +30,11 @@ pub struct Cli {
 /// Top-level subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Manage contributors.
-    Contributor {
-        /// Contributor subcommand.
+    /// Manage actors (humans and tools).
+    Actor {
+        /// Actor subcommand.
         #[command(subcommand)]
-        command: ContributorCommand,
+        command: ActorCommand,
     },
     /// Manage issues.
     Issue {
@@ -63,12 +63,6 @@ pub enum Command {
         /// Comment subcommand.
         #[command(subcommand)]
         command: CommentCommand,
-    },
-    /// Manage tools (non-human committers/authors).
-    Tool {
-        /// Tool subcommand.
-        #[command(subcommand)]
-        command: ToolCommand,
     },
     /// Manage provider configuration.
     Config {
@@ -190,20 +184,20 @@ fn parse_key_value(s: &str) -> std::result::Result<(String, String), String> {
     Ok((key.to_string(), value.to_string()))
 }
 
-/// Contributor subcommands.
+/// Actor subcommands.
 #[derive(Subcommand, Debug)]
-pub enum ContributorCommand {
-    /// Initialize yourself as a contributor.
+pub enum ActorCommand {
+    /// Initialize yourself as an actor.
     ///
-    /// If no contributors exist yet, bootstraps you as the first contributor
-    /// with the `admin` role.  Otherwise, registers a new contributor from
-    /// your git identity.  Errors if you are already a contributor.
+    /// If no actors exist yet, bootstraps you as the first actor with the
+    /// `admin` and `contributor` roles.  Otherwise, registers a new actor
+    /// from your git identity.  Errors if you are already registered.
     Init {
         /// Handle (defaults to first word of git user.name).
         #[arg(long)]
         handle: Option<String>,
 
-        /// Display names (defaults to git user.name).
+        /// Names (defaults to git user.name).
         #[arg(long = "name", short = 'n')]
         names: Vec<String>,
 
@@ -219,33 +213,62 @@ pub enum ContributorCommand {
         #[arg(long)]
         no_interactive: bool,
     },
-    /// List all contributors.
+    /// Register a new actor explicitly (humans or tools).
+    New {
+        /// Unique handle.
+        handle: String,
+
+        /// Names this actor is known by.
+        #[arg(long = "name", short = 'n')]
+        names: Vec<String>,
+
+        /// Email addresses.
+        #[arg(long = "email", short = 'e')]
+        emails: Vec<String>,
+
+        /// Key fingerprint to add (reads material from --key-file or stdin).
+        #[arg(long = "add-key")]
+        add_keys: Vec<String>,
+
+        /// File containing public key material for --add-key.
+        #[arg(long = "key-file", short = 'f')]
+        key_file: Option<PathBuf>,
+
+        /// Attributes as KEY=VALUE (e.g. --attr vendor=Anthropic).
+        #[arg(long = "attr", value_parser = parse_key_value)]
+        attrs: Vec<(String, String)>,
+
+        /// Roles to grant.
+        #[arg(long = "role", short = 'r')]
+        roles: Vec<String>,
+    },
+    /// List all actors.
     List,
-    /// Show a contributor by handle or UUID.
+    /// Show an actor by handle or UUID.
     Show {
-        /// Handle or UUID of the contributor.
+        /// Handle or UUID of the actor.
         reference: String,
     },
-    /// Rename a contributor's handle.
+    /// Rename an actor's handle.
     Rename {
         /// Current handle.
         old: String,
         /// New handle.
         new: String,
     },
-    /// Edit a contributor's fields.
+    /// Edit an actor's fields.
     ///
     /// When no flags are given and a TTY is available, opens an interactive
     /// picker to select which fields to modify.
     Edit {
-        /// Contributor handle.
+        /// Actor handle.
         handle: String,
 
-        /// Display names to add.
+        /// Names to add.
         #[arg(long = "add-name")]
         add_names: Vec<String>,
 
-        /// Display names to remove.
+        /// Names to remove.
         #[arg(long = "remove-name")]
         remove_names: Vec<String>,
 
@@ -269,75 +292,6 @@ pub enum ContributorCommand {
         #[arg(long = "remove-key")]
         remove_keys: Vec<String>,
 
-        /// Roles to add.
-        #[arg(long = "add-role")]
-        add_roles: Vec<String>,
-
-        /// Roles to remove.
-        #[arg(long = "remove-role")]
-        remove_roles: Vec<String>,
-
-        /// Prompt interactively for fields to edit.
-        #[arg(long, short = 'i')]
-        interactive: bool,
-    },
-}
-
-/// Tool subcommands.
-#[derive(Subcommand, Debug)]
-pub enum ToolCommand {
-    /// Register a new tool.
-    New {
-        /// Unique handle (e.g. "claude-code").
-        handle: String,
-
-        /// Canonical git identity name (e.g. "Claude Code").
-        #[arg(long, short = 'n')]
-        name: String,
-
-        /// Canonical git identity email.
-        #[arg(long, short = 'e')]
-        email: String,
-
-        /// Alternate names matched in git author/committer fields.
-        #[arg(long = "alias", short = 'a')]
-        aliases: Vec<String>,
-
-        /// Attributes as KEY=VALUE pairs (e.g. --attr vendor=Anthropic).
-        #[arg(long = "attr", value_parser = parse_key_value)]
-        attrs: Vec<(String, String)>,
-
-        /// Roles to grant.
-        #[arg(long = "role", short = 'r')]
-        roles: Vec<String>,
-    },
-    /// List all tools.
-    List,
-    /// Show a tool by handle or UUID.
-    Show {
-        /// Handle or UUID of the tool.
-        reference: String,
-    },
-    /// Rename a tool's handle.
-    Rename {
-        /// Current handle.
-        old: String,
-        /// New handle.
-        new: String,
-    },
-    /// Edit a tool's fields.
-    Edit {
-        /// Tool handle.
-        handle: String,
-
-        /// Aliases to add.
-        #[arg(long = "add-alias")]
-        add_aliases: Vec<String>,
-
-        /// Aliases to remove.
-        #[arg(long = "remove-alias")]
-        remove_aliases: Vec<String>,
-
         /// Attributes to set as KEY=VALUE.
         #[arg(long = "set-attr", value_parser = parse_key_value)]
         set_attrs: Vec<(String, String)>,
@@ -353,6 +307,10 @@ pub enum ToolCommand {
         /// Roles to remove.
         #[arg(long = "remove-role")]
         remove_roles: Vec<String>,
+
+        /// Prompt interactively for fields to edit.
+        #[arg(long, short = 'i')]
+        interactive: bool,
     },
 }
 

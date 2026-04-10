@@ -1058,18 +1058,18 @@ fn default_sigils(provider: &str) -> BTreeMap<String, String> {
 ///
 /// # Errors
 /// Returns an error if `user.email` is not configured or no matching
-/// contributor is found.
+/// actor is found.
 fn current_contributor_uuid(repo: &git2::Repository, store: &crate::Store<'_>) -> Result<String> {
     let cfg = repo.config()?;
     let email = cfg
         .get_string("user.email")
         .map_err(|_| Error::Config("user.email not set".into()))?;
-    let map = store.email_to_contributor_map()?;
+    let map = store.email_to_actor_map()?;
     map.get(&email)
-        .map(|id| id.as_str().to_string())
+        .map(|id: &crate::actor::ActorId| id.as_str().to_string())
         .ok_or_else(|| {
             Error::Config(format!(
-                "no contributor found for email {email}; run `forge contributor bootstrap` first"
+                "no actor found for email {email}; run `forge actor init` first"
             ))
         })
 }
@@ -1202,16 +1202,15 @@ impl Executor {
     /// Panics if facet-json fails to serialize a value (indicates a bug).
     #[allow(clippy::too_many_lines)]
     pub fn run(&self, cli: &crate::cli::Cli) -> Result<()> {
+        use crate::actor::Actor;
         use crate::cli::{
-            Command, CommentCommand, ConfigCommand, ContributorCommand, IssueCommand,
-            ReviewCommand, ToolCommand,
+            ActorCommand, Command, CommentCommand, ConfigCommand, IssueCommand, ReviewCommand,
         };
         use crate::comment::{edit_in_thread, find_thread_by_comment, list_thread_comments};
-        use crate::contributor::Contributor;
 
         match &cli.command {
-            Command::Contributor { command } => match command {
-                ContributorCommand::Init {
+            Command::Actor { command } => match command {
+                ActorCommand::Init {
                     handle,
                     names,
                     emails,
@@ -1219,17 +1218,16 @@ impl Executor {
                     no_interactive,
                 } => {
                     let store = self.store();
-                    let existing = store.list_contributors()?;
+                    let existing = store.list_actors()?;
                     let sig = self.repo.signature()?;
                     let default_name = sig.name().unwrap_or("unknown").to_string();
                     let default_email = sig.email().unwrap_or("unknown").to_string();
 
                     if existing.is_empty() {
-                        // Bootstrap: first contributor gets admin role.
                         let interactive = !no_interactive && should_interact(handle.is_none());
                         let (eff_handle, eff_names, eff_emails) = if interactive {
                             let default_handle = default_handle_from_name(&default_name);
-                            let input = crate::interactive::prompt_init_contributor(
+                            let input = crate::interactive::prompt_init_actor(
                                 &default_handle,
                                 &default_name,
                                 &default_email,
@@ -1252,39 +1250,32 @@ impl Executor {
                             (h, n, e)
                         };
                         let eff_roles = if roles.is_empty() {
-                            vec!["admin".to_string()]
+                            vec!["admin".to_string(), "contributor".to_string()]
                         } else {
                             roles.clone()
                         };
                         let names_ref: Vec<&str> = eff_names.iter().map(String::as_str).collect();
                         let emails_ref: Vec<&str> = eff_emails.iter().map(String::as_str).collect();
                         let roles_ref: Vec<&str> = eff_roles.iter().map(String::as_str).collect();
-                        let c = store.create_contributor(
-                            &eff_handle,
-                            &names_ref,
-                            &emails_ref,
-                            &roles_ref,
-                        )?;
+                        let a =
+                            store.create_actor(&eff_handle, &names_ref, &emails_ref, &roles_ref)?;
                         if cli.json {
-                            println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                            println!("{}", facet_json::to_string_pretty(&a).expect("serialize"));
                         } else {
-                            println!("bootstrapped contributor {} ({})", c.handle, c.id);
+                            println!("bootstrapped actor {} ({})", a.handle, a.id);
                         }
                     } else {
-                        // Check if caller is already a contributor.
-                        let email_map = store.email_to_contributor_map()?;
+                        let email_map = store.email_to_actor_map()?;
                         if email_map.contains_key(&default_email) {
                             return Err(Error::Config(
-                                "you are already a contributor; use `contributor edit` instead"
-                                    .into(),
+                                "you are already registered; use `actor edit` instead".into(),
                             ));
                         }
 
-                        // Add new contributor (no admin role by default).
                         let interactive = !no_interactive && should_interact(handle.is_none());
                         let (eff_handle, eff_names, eff_emails) = if interactive {
                             let default_handle = default_handle_from_name(&default_name);
-                            let input = crate::interactive::prompt_init_contributor(
+                            let input = crate::interactive::prompt_init_actor(
                                 &default_handle,
                                 &default_name,
                                 &default_email,
@@ -1309,76 +1300,116 @@ impl Executor {
                         let roles_ref: Vec<&str> = roles.iter().map(String::as_str).collect();
                         let names_ref: Vec<&str> = eff_names.iter().map(String::as_str).collect();
                         let emails_ref: Vec<&str> = eff_emails.iter().map(String::as_str).collect();
-                        let c = store.create_contributor(
-                            &eff_handle,
-                            &names_ref,
-                            &emails_ref,
-                            &roles_ref,
-                        )?;
+                        let a =
+                            store.create_actor(&eff_handle, &names_ref, &emails_ref, &roles_ref)?;
                         if cli.json {
-                            println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                            println!("{}", facet_json::to_string_pretty(&a).expect("serialize"));
                         } else {
-                            println!("added contributor {} ({})", c.handle, c.id);
+                            println!("added actor {} ({})", a.handle, a.id);
                         }
                     }
                 }
 
-                ContributorCommand::List => {
-                    let contributors = self.store().list_contributors()?;
+                ActorCommand::New {
+                    handle,
+                    names,
+                    emails,
+                    add_keys,
+                    key_file,
+                    attrs,
+                    roles,
+                } => {
+                    let names_ref: Vec<&str> = names.iter().map(String::as_str).collect();
+                    let emails_ref: Vec<&str> = emails.iter().map(String::as_str).collect();
+                    let roles_ref: Vec<&str> = roles.iter().map(String::as_str).collect();
+                    let mut a =
+                        self.store()
+                            .create_actor(handle, &names_ref, &emails_ref, &roles_ref)?;
+                    for fp in add_keys {
+                        let material = if let Some(path) = key_file {
+                            std::fs::read(path)?
+                        } else {
+                            use std::io::Read;
+                            let mut buf = Vec::new();
+                            std::io::stdin().read_to_end(&mut buf)?;
+                            buf
+                        };
+                        a = self.store().add_actor_key(handle, fp, &material)?;
+                    }
+                    for (key, value) in attrs {
+                        a = self.store().set_actor_attr(handle, key, value)?;
+                    }
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&a).expect("serialize"));
+                    } else {
+                        println!("added actor {} ({})", a.handle, a.id);
+                    }
+                }
+
+                ActorCommand::List => {
+                    let actors = self.store().list_actors()?;
                     if cli.json {
                         println!(
                             "{}",
-                            facet_json::to_string_pretty(&contributors).expect("serialize")
+                            facet_json::to_string_pretty(&actors).expect("serialize")
                         );
                     } else {
-                        for c in &contributors {
-                            let roles = if c.roles.is_empty() {
+                        for a in &actors {
+                            let roles = if a.roles.is_empty() {
                                 String::new()
                             } else {
-                                format!("  roles={}", c.roles.join(","))
+                                format!("  roles={}", a.roles.join(","))
                             };
-                            println!("{}  {}{}", c.id, c.handle, roles);
+                            println!("{}  {}{}", a.id, a.handle, roles);
                         }
                     }
                 }
 
-                ContributorCommand::Show { reference } => {
-                    let c: Contributor = if let Ok(c) = self.store().get_contributor(reference) {
-                        c
+                ActorCommand::Show { reference } => {
+                    let a: Actor = if let Ok(a) = self.store().get_actor(reference) {
+                        a
                     } else {
-                        let id = self.store().resolve_handle(reference)?;
-                        self.store().get_contributor(id.as_str())?
+                        let id = self.store().resolve_actor_handle(reference)?;
+                        self.store().get_actor(id.as_str())?
                     };
                     if cli.json {
-                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                        println!("{}", facet_json::to_string_pretty(&a).expect("serialize"));
                     } else {
-                        println!("id:     {}", c.id);
-                        println!("handle: {}", c.handle);
-                        if !c.names.is_empty() {
-                            println!("names:  {}", c.names.join(", "));
+                        println!("id:     {}", a.id);
+                        println!("handle: {}", a.handle);
+                        if !a.names.is_empty() {
+                            println!("names:  {}", a.names.join(", "));
                         }
-                        if !c.emails.is_empty() {
-                            println!("emails: {}", c.emails.join(", "));
+                        if !a.emails.is_empty() {
+                            println!("emails: {}", a.emails.join(", "));
                         }
-                        if !c.roles.is_empty() {
-                            println!("roles:  {}", c.roles.join(", "));
+                        if !a.keys.is_empty() {
+                            println!("keys:   {}", a.keys.join(", "));
                         }
-                        if !c.keys.is_empty() {
-                            println!("keys:   {}", c.keys.join(", "));
+                        if !a.attributes.is_empty() {
+                            let kv: Vec<String> = a
+                                .attributes
+                                .iter()
+                                .map(|(k, v)| format!("{k}={v}"))
+                                .collect();
+                            println!("attrs:  {}", kv.join(", "));
+                        }
+                        if !a.roles.is_empty() {
+                            println!("roles:  {}", a.roles.join(", "));
                         }
                     }
                 }
 
-                ContributorCommand::Rename { old, new } => {
-                    let c = self.store().rename_contributor(old, new)?;
+                ActorCommand::Rename { old, new } => {
+                    let a = self.store().rename_actor(old, new)?;
                     if cli.json {
-                        println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
+                        println!("{}", facet_json::to_string_pretty(&a).expect("serialize"));
                     } else {
-                        println!("renamed contributor {} → {} ({})", old, c.handle, c.id);
+                        println!("renamed actor {} → {} ({})", old, a.handle, a.id);
                     }
                 }
 
-                ContributorCommand::Edit {
+                ActorCommand::Edit {
                     handle,
                     add_names,
                     remove_names,
@@ -1387,6 +1418,8 @@ impl Executor {
                     add_keys,
                     key_file,
                     remove_keys,
+                    set_attrs,
+                    remove_attrs,
                     add_roles,
                     remove_roles,
                     interactive,
@@ -1397,6 +1430,8 @@ impl Executor {
                         && remove_emails.is_empty()
                         && add_keys.is_empty()
                         && remove_keys.is_empty()
+                        && set_attrs.is_empty()
+                        && remove_attrs.is_empty()
                         && add_roles.is_empty()
                         && remove_roles.is_empty();
                     let interactive = *interactive || should_interact(no_flags);
@@ -1409,9 +1444,9 @@ impl Executor {
                         eff_add_roles,
                         eff_remove_roles,
                     ) = if interactive {
-                        let current_id = self.store().resolve_handle(handle)?;
-                        let current = self.store().get_contributor(current_id.as_str())?;
-                        let input = crate::interactive::prompt_edit_contributor(&current)?;
+                        let current_id = self.store().resolve_actor_handle(handle)?;
+                        let current = self.store().get_actor(current_id.as_str())?;
+                        let input = crate::interactive::prompt_edit_actor(&current)?;
                         (
                             input.add_names,
                             input.remove_names,
@@ -1432,21 +1467,21 @@ impl Executor {
                     };
 
                     let store = self.store();
-                    let mut c: Option<Contributor> = None;
+                    let mut a: Option<Actor> = None;
                     for name in &eff_remove_names {
-                        c = Some(store.remove_contributor_name(handle, name)?);
+                        a = Some(store.remove_actor_name(handle, name)?);
                     }
                     for name in &eff_add_names {
-                        c = Some(store.add_contributor_name(handle, name)?);
+                        a = Some(store.add_actor_name(handle, name)?);
                     }
                     for email in &eff_remove_emails {
-                        c = Some(store.remove_contributor_email(handle, email)?);
+                        a = Some(store.remove_actor_email(handle, email)?);
                     }
                     for email in &eff_add_emails {
-                        c = Some(store.add_contributor_email(handle, email)?);
+                        a = Some(store.add_actor_email(handle, email)?);
                     }
                     for fp in remove_keys {
-                        c = Some(store.remove_contributor_key(handle, fp)?);
+                        a = Some(store.remove_actor_key(handle, fp)?);
                     }
                     for fp in add_keys {
                         let material = if let Some(path) = key_file {
@@ -1457,151 +1492,26 @@ impl Executor {
                             std::io::stdin().read_to_end(&mut buf)?;
                             buf
                         };
-                        c = Some(store.add_contributor_key(handle, fp, &material)?);
-                    }
-                    for role in &eff_remove_roles {
-                        c = Some(store.remove_contributor_role(handle, role)?);
-                    }
-                    for role in &eff_add_roles {
-                        c = Some(store.add_contributor_role(handle, role)?);
-                    }
-
-                    if let Some(c) = c {
-                        if cli.json {
-                            println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
-                        } else {
-                            println!("updated contributor {}", c.handle);
-                        }
-                    } else {
-                        println!("no changes");
-                    }
-                }
-            },
-
-            Command::Tool { command } => match command {
-                ToolCommand::New {
-                    handle,
-                    name,
-                    email,
-                    aliases,
-                    attrs,
-                    roles,
-                } => {
-                    let aliases_ref: Vec<&str> = aliases.iter().map(String::as_str).collect();
-                    let attrs_ref: Vec<(&str, &str)> = attrs
-                        .iter()
-                        .map(|(k, v)| (k.as_str(), v.as_str()))
-                        .collect();
-                    let roles_ref: Vec<&str> = roles.iter().map(String::as_str).collect();
-                    let t = self.store().create_tool(
-                        handle,
-                        name,
-                        email,
-                        &aliases_ref,
-                        &attrs_ref,
-                        &roles_ref,
-                    )?;
-                    if cli.json {
-                        println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
-                    } else {
-                        println!("added tool {} ({})", t.handle, t.id);
-                    }
-                }
-
-                ToolCommand::List => {
-                    let tools = self.store().list_tools()?;
-                    if cli.json {
-                        println!(
-                            "{}",
-                            facet_json::to_string_pretty(&tools).expect("serialize")
-                        );
-                    } else {
-                        for t in &tools {
-                            let roles = if t.roles.is_empty() {
-                                String::new()
-                            } else {
-                                format!("  roles={}", t.roles.join(","))
-                            };
-                            println!("{}  {}{}", t.id, t.handle, roles);
-                        }
-                    }
-                }
-
-                ToolCommand::Show { reference } => {
-                    use crate::tool::Tool;
-                    let t: Tool = if let Ok(t) = self.store().get_tool(reference) {
-                        t
-                    } else {
-                        let id = self.store().resolve_tool_handle(reference)?;
-                        self.store().get_tool(id.as_str())?
-                    };
-                    if cli.json {
-                        println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
-                    } else {
-                        println!("id:     {}", t.id);
-                        println!("handle: {}", t.handle);
-                        println!("name:   {}", t.name);
-                        println!("email:  {}", t.email);
-                        if !t.aliases.is_empty() {
-                            println!("aliases: {}", t.aliases.join(", "));
-                        }
-                        if !t.attributes.is_empty() {
-                            let kv: Vec<String> = t
-                                .attributes
-                                .iter()
-                                .map(|(k, v)| format!("{k}={v}"))
-                                .collect();
-                            println!("attrs:  {}", kv.join(", "));
-                        }
-                        if !t.roles.is_empty() {
-                            println!("roles:  {}", t.roles.join(", "));
-                        }
-                    }
-                }
-
-                ToolCommand::Rename { old, new } => {
-                    let t = self.store().rename_tool(old, new)?;
-                    if cli.json {
-                        println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
-                    } else {
-                        println!("renamed tool {} → {} ({})", old, t.handle, t.id);
-                    }
-                }
-
-                ToolCommand::Edit {
-                    handle,
-                    add_aliases,
-                    remove_aliases,
-                    set_attrs,
-                    remove_attrs,
-                    add_roles,
-                    remove_roles,
-                } => {
-                    let store = self.store();
-                    let mut t = None;
-                    for alias in remove_aliases {
-                        t = Some(store.remove_tool_alias(handle, alias)?);
-                    }
-                    for alias in add_aliases {
-                        t = Some(store.add_tool_alias(handle, alias)?);
+                        a = Some(store.add_actor_key(handle, fp, &material)?);
                     }
                     for key in remove_attrs {
-                        t = Some(store.remove_tool_attr(handle, key)?);
+                        a = Some(store.remove_actor_attr(handle, key)?);
                     }
                     for (key, value) in set_attrs {
-                        t = Some(store.set_tool_attr(handle, key, value)?);
+                        a = Some(store.set_actor_attr(handle, key, value)?);
                     }
-                    for role in remove_roles {
-                        t = Some(store.remove_tool_role(handle, role)?);
+                    for role in &eff_remove_roles {
+                        a = Some(store.remove_actor_role(handle, role)?);
                     }
-                    for role in add_roles {
-                        t = Some(store.add_tool_role(handle, role)?);
+                    for role in &eff_add_roles {
+                        a = Some(store.add_actor_role(handle, role)?);
                     }
-                    if let Some(t) = t {
+
+                    if let Some(a) = a {
                         if cli.json {
-                            println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
+                            println!("{}", facet_json::to_string_pretty(&a).expect("serialize"));
                         } else {
-                            println!("updated tool {}", t.handle);
+                            println!("updated actor {}", a.handle);
                         }
                     } else {
                         println!("no changes");

@@ -3,7 +3,7 @@
 use inquire::{Editor, MultiSelect, Select, Text};
 
 use crate::Result;
-use crate::contributor::Contributor;
+use crate::actor::Actor;
 use crate::error::Error;
 use crate::issue::{Issue, IssueState};
 use crate::review::{Review, ReviewState};
@@ -184,8 +184,8 @@ pub fn prompt_body(hint: Option<&str>) -> Result<String> {
     editor.prompt().map_err(|_| Error::Interrupted)
 }
 
-/// Collected input from the interactive `contributor init` prompts.
-pub struct InitContributorInput {
+/// Collected input from the interactive `actor init` prompts.
+pub struct InitActorInput {
     /// Chosen handle.
     pub handle: String,
     /// Display names.
@@ -194,15 +194,15 @@ pub struct InitContributorInput {
     pub emails: Vec<String>,
 }
 
-/// Prompt for contributor init fields, pre-filled from git identity.
+/// Prompt for actor init fields, pre-filled from git identity.
 ///
 /// # Errors
 /// Returns [`Error::Interrupted`] if the user cancels any prompt.
-pub fn prompt_init_contributor(
+pub fn prompt_init_actor(
     default_handle: &str,
     default_name: &str,
     default_email: &str,
-) -> Result<InitContributorInput> {
+) -> Result<InitActorInput> {
     let handle = Text::new("Handle")
         .with_initial_value(default_handle)
         .prompt()
@@ -218,15 +218,15 @@ pub fn prompt_init_contributor(
         .prompt()
         .map_err(|_| Error::Interrupted)?;
 
-    Ok(InitContributorInput {
+    Ok(InitActorInput {
         handle,
         names: vec![name],
         emails: vec![email],
     })
 }
 
-/// Edits collected from the interactive contributor edit picker.
-pub struct EditContributorInput {
+/// Edits collected from the interactive actor edit picker.
+pub struct EditActorInput {
     /// Names to add.
     pub add_names: Vec<String>,
     /// Names to remove.
@@ -241,18 +241,18 @@ pub struct EditContributorInput {
     pub remove_roles: Vec<String>,
 }
 
-/// Prompt the user to pick which contributor fields to edit, then prompt for
+/// Prompt the user to pick which actor fields to edit, then prompt for
 /// values to add/remove per field.
 ///
 /// # Errors
 /// Returns [`Error::Interrupted`] if the user cancels any prompt.
-pub fn prompt_edit_contributor(current: &Contributor) -> Result<EditContributorInput> {
+pub fn prompt_edit_actor(current: &Actor) -> Result<EditActorInput> {
     let field_options = vec!["names", "emails", "roles"];
     let fields = MultiSelect::new("Fields to edit", field_options)
         .prompt()
         .map_err(|_| Error::Interrupted)?;
 
-    let mut input = EditContributorInput {
+    let mut input = EditActorInput {
         add_names: Vec::new(),
         remove_names: Vec::new(),
         add_emails: Vec::new(),

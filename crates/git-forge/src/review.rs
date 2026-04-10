@@ -9,7 +9,7 @@
 //! ├── labels/
 //! │   └── <name>       # empty blob
 //! ├── assignees/
-//! │   └── <contributor-uuid>   # empty blob
+//! │   └── <actor-uuid>   # empty blob
 //! ├── target/
 //! │   ├── head         # blob: <oid>
 //! │   └── base         # blob: <oid> (optional)
@@ -17,7 +17,7 @@
 //! │   └── <oid>        # actual git object (pin for GC)
 //! └── approvals/
 //!     └── <oid>/
-//!         └── <contributor-uuid>   # empty blob
+//!         └── <actor-uuid>   # empty blob
 //! ```
 //!
 //! Authorship and timestamps live in the commit metadata.
@@ -142,7 +142,7 @@ fn review_from_entry(
     let mut path: Option<String> = None;
     let mut labels = Vec::new();
     let mut assignees = Vec::new();
-    // approvals/<oid>/<contributor-uuid> — collect all entries
+    // approvals/<oid>/<actor-uuid> — collect all entries
     let mut approvals_map: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();
 
@@ -661,13 +661,13 @@ impl Store<'_> {
         Ok((old_head, review))
     }
 
-    /// Approve all objects in a review as the given contributor UUID.
+    /// Approve all objects in a review as the given actor UUID.
     ///
-    /// Writes `approvals/<oid>/<contributor-uuid>` for each object in `objects/`.
+    /// Writes `approvals/<oid>/<actor-uuid>` for each object in `objects/`.
     ///
     /// # Errors
     /// Returns an error if the review does not exist or a git operation fails.
-    pub fn approve_review(&self, oid_or_id: &str, contributor_uuid: &str) -> Result<Review> {
+    pub fn approve_review(&self, oid_or_id: &str, actor_uuid: &str) -> Result<Review> {
         let index = read_index(self.repo, REVIEW_INDEX)?;
         let known_oids = self.repo.list(REVIEW_PREFIX)?;
         let oid = resolve_oid(index.as_ref(), &known_oids, oid_or_id)?;
@@ -683,7 +683,7 @@ impl Store<'_> {
         let approval_paths: Vec<String> = review
             .objects
             .iter()
-            .map(|obj_oid| format!("approvals/{obj_oid}/{contributor_uuid}"))
+            .map(|obj_oid| format!("approvals/{obj_oid}/{actor_uuid}"))
             .collect();
         let mutations: Vec<Mutation<'_>> = approval_paths
             .iter()
@@ -705,7 +705,7 @@ impl Store<'_> {
         &self,
         oid_or_id: &str,
         obj_oid: &str,
-        contributor_uuid: &str,
+        actor_uuid: &str,
     ) -> Result<Review> {
         let index = read_index(self.repo, REVIEW_INDEX)?;
         let known_oids = self.repo.list(REVIEW_PREFIX)?;
@@ -720,7 +720,7 @@ impl Store<'_> {
             )));
         }
 
-        let field = format!("approvals/{obj_oid}/{contributor_uuid}");
+        let field = format!("approvals/{obj_oid}/{actor_uuid}");
         let mutations = [Mutation::Set(field.as_str(), b"")];
         let entry = self
             .repo
@@ -729,11 +729,11 @@ impl Store<'_> {
         review_from_entry(self.repo, &entry, &ref_name, display_id)
     }
 
-    /// Revoke approval of all objects for a contributor.
+    /// Revoke approval of all objects for an actor.
     ///
     /// # Errors
     /// Returns an error if the review does not exist.
-    pub fn revoke_approval(&self, oid_or_id: &str, contributor_uuid: &str) -> Result<Review> {
+    pub fn revoke_approval(&self, oid_or_id: &str, actor_uuid: &str) -> Result<Review> {
         let index = read_index(self.repo, REVIEW_INDEX)?;
         let known_oids = self.repo.list(REVIEW_PREFIX)?;
         let oid = resolve_oid(index.as_ref(), &known_oids, oid_or_id)?;
@@ -745,7 +745,7 @@ impl Store<'_> {
         let del_paths: Vec<String> = review
             .objects
             .iter()
-            .map(|obj_oid| format!("approvals/{obj_oid}/{contributor_uuid}"))
+            .map(|obj_oid| format!("approvals/{obj_oid}/{actor_uuid}"))
             .collect();
         let mutations: Vec<Mutation<'_>> = del_paths
             .iter()

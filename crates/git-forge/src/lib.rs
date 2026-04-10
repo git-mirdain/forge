@@ -1,13 +1,12 @@
 //! Local-first infrastructure for Git forges.
 
+pub mod actor;
 pub mod comment;
-pub mod contributor;
 pub mod error;
 pub mod issue;
 pub mod refs;
 pub mod review;
 pub mod sync;
-pub mod tool;
 
 #[cfg(feature = "cli")]
 pub mod cli;
