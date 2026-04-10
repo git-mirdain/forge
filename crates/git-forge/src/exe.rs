@@ -1545,9 +1545,12 @@ impl Executor {
                         if !t.aliases.is_empty() {
                             println!("aliases: {}", t.aliases.join(", "));
                         }
-                        if !t.attrs.is_empty() {
-                            let kv: Vec<String> =
-                                t.attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                        if !t.attributes.is_empty() {
+                            let kv: Vec<String> = t
+                                .attributes
+                                .iter()
+                                .map(|(k, v)| format!("{k}={v}"))
+                                .collect();
                             println!("attrs:  {}", kv.join(", "));
                         }
                         if !t.roles.is_empty() {

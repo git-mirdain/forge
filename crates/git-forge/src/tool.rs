@@ -8,7 +8,7 @@
 //! ├── email           # blob: canonical git identity email
 //! ├── aliases/
 //! │   └── <name>      # empty blob — alternate names in git author/committer field
-//! ├── attrs/
+//! ├── attributes/
 //! │   └── <key>       # blob: attribute value (e.g. vendor, model, type)
 //! └── roles/
 //!     └── <role>      # empty blob — presence means role is granted
@@ -85,7 +85,7 @@ pub struct Tool {
     /// Alternate names matched in git author/committer fields.
     pub aliases: Vec<String>,
     /// Arbitrary key→value attributes (e.g. `vendor`, `model`, `type`).
-    pub attrs: BTreeMap<String, String>,
+    pub attributes: BTreeMap<String, String>,
     /// Roles present in `roles/`.
     pub roles: Vec<String>,
 }
@@ -151,7 +151,7 @@ fn read_tool(repo: &Repository, id: &ToolId) -> Result<Option<Tool>> {
         .unwrap_or_default();
 
     let aliases = read_subtree_keys(repo, &tree, "aliases");
-    let attrs = read_subtree_kv(repo, &tree, "attrs");
+    let attributes = read_subtree_kv(repo, &tree, "attributes");
     let roles = read_subtree_keys(repo, &tree, "roles");
 
     Ok(Some(Tool {
@@ -160,7 +160,7 @@ fn read_tool(repo: &Repository, id: &ToolId) -> Result<Option<Tool>> {
         name,
         email,
         aliases,
-        attrs,
+        attributes,
         roles,
     }))
 }
@@ -170,7 +170,7 @@ struct NewTool<'a> {
     name: &'a str,
     email: &'a str,
     aliases: &'a [&'a str],
-    attrs: &'a [(&'a str, &'a str)],
+    attributes: &'a [(&'a str, &'a str)],
     roles: &'a [&'a str],
 }
 
@@ -195,13 +195,13 @@ fn write_tool(repo: &Repository, id: &ToolId, fields: &NewTool<'_>, message: &st
         builder.insert("aliases", ab.write()?, 0o040_000)?;
     }
 
-    if !fields.attrs.is_empty() {
+    if !fields.attributes.is_empty() {
         let mut atb = repo.treebuilder(None)?;
-        for (key, value) in fields.attrs {
+        for (key, value) in fields.attributes {
             let blob_oid = repo.blob(value.as_bytes())?;
             atb.insert(key, blob_oid, 0o100_644)?;
         }
-        builder.insert("attrs", atb.write()?, 0o040_000)?;
+        builder.insert("attributes", atb.write()?, 0o040_000)?;
     }
 
     if !fields.roles.is_empty() {
@@ -234,7 +234,7 @@ impl Store<'_> {
         name: &str,
         email: &str,
         aliases: &[&str],
-        attrs: &[(&str, &str)],
+        attributes: &[(&str, &str)],
         roles: &[&str],
     ) -> Result<Tool> {
         let handle = Handle::new(handle)?;
@@ -250,7 +250,7 @@ impl Store<'_> {
                 name,
                 email,
                 aliases,
-                attrs,
+                attributes,
                 roles,
             },
             "create tool",
@@ -261,7 +261,7 @@ impl Store<'_> {
             name: name.to_string(),
             email: email.to_string(),
             aliases: aliases.iter().map(ToString::to_string).collect(),
-            attrs: attrs
+            attributes: attributes
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
@@ -369,7 +369,7 @@ impl Store<'_> {
             name: tool.name,
             email: tool.email,
             aliases: tool.aliases,
-            attrs: tool.attrs,
+            attributes: tool.attributes,
             roles: tool.roles,
         })
     }
@@ -414,7 +414,7 @@ impl Store<'_> {
             name: tool.name,
             email: tool.email,
             aliases,
-            attrs: tool.attrs,
+            attributes: tool.attributes,
             roles: tool.roles,
         })
     }
@@ -455,7 +455,7 @@ impl Store<'_> {
             name: tool.name,
             email: tool.email,
             aliases,
-            attrs: tool.attrs,
+            attributes: tool.attributes,
             roles: tool.roles,
         })
     }
@@ -477,7 +477,7 @@ impl Store<'_> {
         let old_tree = parent_commit.tree()?;
 
         let blob_oid = self.repo.blob(value.as_bytes())?;
-        let new_tree_oid = insert_into_subtree(self.repo, &old_tree, "attrs", key, blob_oid)?;
+        let new_tree_oid = insert_into_subtree(self.repo, &old_tree, "attributes", key, blob_oid)?;
         let new_tree = self.repo.find_tree(new_tree_oid)?;
 
         let sig = self.repo.signature()?;
@@ -490,15 +490,15 @@ impl Store<'_> {
             &[&parent_commit],
         )?;
 
-        let mut attrs = tool.attrs;
-        attrs.insert(key.to_string(), value.to_string());
+        let mut attributes = tool.attributes;
+        attributes.insert(key.to_string(), value.to_string());
         Ok(Tool {
             id: tool.id,
             handle: h,
             name: tool.name,
             email: tool.email,
             aliases: tool.aliases,
-            attrs,
+            attributes,
             roles: tool.roles,
         })
     }
@@ -518,7 +518,7 @@ impl Store<'_> {
         let parent_commit = reference.peel_to_commit()?;
         let old_tree = parent_commit.tree()?;
 
-        let new_tree_oid = drop_from_subtree(self.repo, &old_tree, "attrs", key)?;
+        let new_tree_oid = drop_from_subtree(self.repo, &old_tree, "attributes", key)?;
         let new_tree = self.repo.find_tree(new_tree_oid)?;
 
         let sig = self.repo.signature()?;
@@ -531,15 +531,15 @@ impl Store<'_> {
             &[&parent_commit],
         )?;
 
-        let mut attrs = tool.attrs;
-        attrs.remove(key);
+        let mut attributes = tool.attributes;
+        attributes.remove(key);
         Ok(Tool {
             id: tool.id,
             handle: h,
             name: tool.name,
             email: tool.email,
             aliases: tool.aliases,
-            attrs,
+            attributes,
             roles: tool.roles,
         })
     }
@@ -583,7 +583,7 @@ impl Store<'_> {
             name: tool.name,
             email: tool.email,
             aliases: tool.aliases,
-            attrs: tool.attrs,
+            attributes: tool.attributes,
             roles,
         })
     }
@@ -624,7 +624,7 @@ impl Store<'_> {
             name: tool.name,
             email: tool.email,
             aliases: tool.aliases,
-            attrs: tool.attrs,
+            attributes: tool.attributes,
             roles,
         })
     }
