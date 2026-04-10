@@ -1203,7 +1203,8 @@ impl Executor {
     #[allow(clippy::too_many_lines)]
     pub fn run(&self, cli: &crate::cli::Cli) -> Result<()> {
         use crate::cli::{
-            Command, CommentCommand, ConfigCommand, ContributorCommand, IssueCommand, ReviewCommand,
+            Command, CommentCommand, ConfigCommand, ContributorCommand, IssueCommand,
+            ReviewCommand, ToolCommand,
         };
         use crate::comment::{edit_in_thread, find_thread_by_comment, list_thread_comments};
         use crate::contributor::Contributor;
@@ -1470,6 +1471,134 @@ impl Executor {
                             println!("{}", facet_json::to_string_pretty(&c).expect("serialize"));
                         } else {
                             println!("updated contributor {}", c.handle);
+                        }
+                    } else {
+                        println!("no changes");
+                    }
+                }
+            },
+
+            Command::Tool { command } => match command {
+                ToolCommand::New {
+                    handle,
+                    name,
+                    email,
+                    aliases,
+                    attrs,
+                    roles,
+                } => {
+                    let aliases_ref: Vec<&str> = aliases.iter().map(String::as_str).collect();
+                    let attrs_ref: Vec<(&str, &str)> = attrs
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), v.as_str()))
+                        .collect();
+                    let roles_ref: Vec<&str> = roles.iter().map(String::as_str).collect();
+                    let t = self.store().create_tool(
+                        handle,
+                        name,
+                        email,
+                        &aliases_ref,
+                        &attrs_ref,
+                        &roles_ref,
+                    )?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
+                    } else {
+                        println!("added tool {} ({})", t.handle, t.id);
+                    }
+                }
+
+                ToolCommand::List => {
+                    let tools = self.store().list_tools()?;
+                    if cli.json {
+                        println!(
+                            "{}",
+                            facet_json::to_string_pretty(&tools).expect("serialize")
+                        );
+                    } else {
+                        for t in &tools {
+                            let roles = if t.roles.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  roles={}", t.roles.join(","))
+                            };
+                            println!("{}  {}{}", t.id, t.handle, roles);
+                        }
+                    }
+                }
+
+                ToolCommand::Show { reference } => {
+                    use crate::tool::Tool;
+                    let t: Tool = if let Ok(t) = self.store().get_tool(reference) {
+                        t
+                    } else {
+                        let id = self.store().resolve_tool_handle(reference)?;
+                        self.store().get_tool(id.as_str())?
+                    };
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
+                    } else {
+                        println!("id:     {}", t.id);
+                        println!("handle: {}", t.handle);
+                        println!("name:   {}", t.name);
+                        println!("email:  {}", t.email);
+                        if !t.aliases.is_empty() {
+                            println!("aliases: {}", t.aliases.join(", "));
+                        }
+                        if !t.attrs.is_empty() {
+                            let kv: Vec<String> =
+                                t.attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                            println!("attrs:  {}", kv.join(", "));
+                        }
+                        if !t.roles.is_empty() {
+                            println!("roles:  {}", t.roles.join(", "));
+                        }
+                    }
+                }
+
+                ToolCommand::Rename { old, new } => {
+                    let t = self.store().rename_tool(old, new)?;
+                    if cli.json {
+                        println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
+                    } else {
+                        println!("renamed tool {} → {} ({})", old, t.handle, t.id);
+                    }
+                }
+
+                ToolCommand::Edit {
+                    handle,
+                    add_aliases,
+                    remove_aliases,
+                    set_attrs,
+                    remove_attrs,
+                    add_roles,
+                    remove_roles,
+                } => {
+                    let store = self.store();
+                    let mut t = None;
+                    for alias in remove_aliases {
+                        t = Some(store.remove_tool_alias(handle, alias)?);
+                    }
+                    for alias in add_aliases {
+                        t = Some(store.add_tool_alias(handle, alias)?);
+                    }
+                    for key in remove_attrs {
+                        t = Some(store.remove_tool_attr(handle, key)?);
+                    }
+                    for (key, value) in set_attrs {
+                        t = Some(store.set_tool_attr(handle, key, value)?);
+                    }
+                    for role in remove_roles {
+                        t = Some(store.remove_tool_role(handle, role)?);
+                    }
+                    for role in add_roles {
+                        t = Some(store.add_tool_role(handle, role)?);
+                    }
+                    if let Some(t) = t {
+                        if cli.json {
+                            println!("{}", facet_json::to_string_pretty(&t).expect("serialize"));
+                        } else {
+                            println!("updated tool {}", t.handle);
                         }
                     } else {
                         println!("no changes");

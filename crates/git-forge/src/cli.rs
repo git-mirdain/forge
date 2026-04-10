@@ -64,6 +64,12 @@ pub enum Command {
         #[command(subcommand)]
         command: CommentCommand,
     },
+    /// Manage tools (non-human committers/authors).
+    Tool {
+        /// Tool subcommand.
+        #[command(subcommand)]
+        command: ToolCommand,
+    },
     /// Manage provider configuration.
     Config {
         /// Config subcommand.
@@ -274,6 +280,79 @@ pub enum ContributorCommand {
         /// Prompt interactively for fields to edit.
         #[arg(long, short = 'i')]
         interactive: bool,
+    },
+}
+
+/// Tool subcommands.
+#[derive(Subcommand, Debug)]
+pub enum ToolCommand {
+    /// Register a new tool.
+    New {
+        /// Unique handle (e.g. "claude-code").
+        handle: String,
+
+        /// Canonical git identity name (e.g. "Claude Code").
+        #[arg(long, short = 'n')]
+        name: String,
+
+        /// Canonical git identity email.
+        #[arg(long, short = 'e')]
+        email: String,
+
+        /// Alternate names matched in git author/committer fields.
+        #[arg(long = "alias", short = 'a')]
+        aliases: Vec<String>,
+
+        /// Attributes as KEY=VALUE pairs (e.g. --attr vendor=Anthropic).
+        #[arg(long = "attr", value_parser = parse_key_value)]
+        attrs: Vec<(String, String)>,
+
+        /// Roles to grant.
+        #[arg(long = "role", short = 'r')]
+        roles: Vec<String>,
+    },
+    /// List all tools.
+    List,
+    /// Show a tool by handle or UUID.
+    Show {
+        /// Handle or UUID of the tool.
+        reference: String,
+    },
+    /// Rename a tool's handle.
+    Rename {
+        /// Current handle.
+        old: String,
+        /// New handle.
+        new: String,
+    },
+    /// Edit a tool's fields.
+    Edit {
+        /// Tool handle.
+        handle: String,
+
+        /// Aliases to add.
+        #[arg(long = "add-alias")]
+        add_aliases: Vec<String>,
+
+        /// Aliases to remove.
+        #[arg(long = "remove-alias")]
+        remove_aliases: Vec<String>,
+
+        /// Attributes to set as KEY=VALUE.
+        #[arg(long = "set-attr", value_parser = parse_key_value)]
+        set_attrs: Vec<(String, String)>,
+
+        /// Attribute keys to remove.
+        #[arg(long = "remove-attr")]
+        remove_attrs: Vec<String>,
+
+        /// Roles to add.
+        #[arg(long = "add-role")]
+        add_roles: Vec<String>,
+
+        /// Roles to remove.
+        #[arg(long = "remove-role")]
+        remove_roles: Vec<String>,
     },
 }
 
