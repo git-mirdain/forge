@@ -420,6 +420,7 @@ impl Store<'_> {
         body: &str,
         target: &ReviewTarget,
         source_ref: Option<&str>,
+        author: Option<&git2::Signature<'_>>,
     ) -> Result<Review> {
         let pins = enumerate_pins(self.repo, target)?;
         let pin_paths: Vec<String> = pins
@@ -449,7 +450,7 @@ impl Store<'_> {
             &IdStrategy::CommitOid,
             &mutations,
             "create review",
-            None,
+            author,
         )?;
 
         Ok(Review {

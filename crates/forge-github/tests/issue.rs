@@ -274,7 +274,7 @@ async fn export_issue_creates_github_issue() {
 
     let store = Store::new(&repo);
     let created = store
-        .create_issue("Local bug", "details", &["bug"], &[])
+        .create_issue("Local bug", "details", &["bug"], &[], None)
         .unwrap();
 
     let report = export_issues(&repo, &cfg, &client).await.unwrap();
@@ -308,7 +308,7 @@ async fn export_skips_already_exported() {
 
     let store = Store::new(&repo);
     store
-        .create_issue("Local bug", "details", &["bug"], &[])
+        .create_issue("Local bug", "details", &["bug"], &[], None)
         .unwrap();
 
     let r1 = export_issues(&repo, &cfg, &client).await.unwrap();
@@ -329,7 +329,7 @@ async fn roundtrip_no_duplicates() {
 
     let store = Store::new(&repo);
     store
-        .create_issue("Local bug", "details", &[], &[])
+        .create_issue("Local bug", "details", &[], &[], None)
         .unwrap();
 
     // Export creates sync state mapping issues/7 → oid.

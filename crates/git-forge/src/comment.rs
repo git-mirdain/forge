@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use facet::Facet;
 use git_chain::{Chain, ChainEntry};
-use git2::{ObjectType, Oid, Repository};
+use git2::{ErrorCode, ObjectType, Oid, Repository};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -363,6 +363,60 @@ fn tip_anchor(repo: &Repository, ref_name: &str) -> Option<Anchor> {
 // v2 thread operations
 // ---------------------------------------------------------------------------
 
+/// Append a commit to a chain ref with an optional author override.
+///
+/// Mirrors `Chain::append` but accepts a caller-supplied author signature so
+/// that a different identity can be recorded as the commit author while the
+/// committer remains the local git identity.
+fn append_with_sig(
+    repo: &Repository,
+    ref_name: &str,
+    message: &str,
+    tree: Oid,
+    parent: Option<Oid>,
+    author: Option<&git2::Signature<'_>>,
+) -> Result<ChainEntry> {
+    let tree_obj = repo.find_tree(tree)?;
+    let committer = repo.signature()?;
+    let owned_author;
+    let author = if let Some(a) = author {
+        a
+    } else {
+        owned_author = repo.signature()?;
+        &owned_author
+    };
+
+    let tip = match repo.find_reference(ref_name) {
+        Ok(r) => Some(r.peel_to_commit()?),
+        Err(e) if e.code() == ErrorCode::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut parents: Vec<&git2::Commit<'_>> = Vec::new();
+    if let Some(ref t) = tip {
+        parents.push(t);
+    }
+    let second_parent;
+    if let Some(p) = parent {
+        second_parent = repo.find_commit(p)?;
+        parents.push(&second_parent);
+    }
+
+    let commit_oid = repo.commit(
+        Some(ref_name),
+        author,
+        &committer,
+        message,
+        &tree_obj,
+        &parents,
+    )?;
+    Ok(ChainEntry {
+        commit: commit_oid,
+        message: message.to_string(),
+        tree,
+    })
+}
+
 /// Create a new comment thread. Returns `(thread_id, root_comment)`.
 ///
 /// # Errors
@@ -372,6 +426,7 @@ pub fn create_thread(
     body: &str,
     anchor: Option<&Anchor>,
     context_lines: Option<&str>,
+    author: Option<&git2::Signature<'_>>,
 ) -> Result<(String, Comment)> {
     let thread_id = Uuid::now_v7().to_string();
     let ref_name = comment_thread_ref(&thread_id);
@@ -381,7 +436,7 @@ pub fn create_thread(
     let trailers = format_trailers(anchor_oid_str, anchor_range, &thread_id, false, None);
     let message = build_message(body, &trailers);
     let tree = build_comment_tree(repo, body, anchor, context_lines)?;
-    let entry = repo.append(&ref_name, &message, tree, None)?;
+    let entry = append_with_sig(repo, &ref_name, &message, tree, None, author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
     Ok((thread_id, comment))
 }
@@ -397,6 +452,7 @@ pub fn reply_to_thread(
     reply_to_oid: &str,
     anchor: Option<&Anchor>,
     context_lines: Option<&str>,
+    author: Option<&git2::Signature<'_>>,
 ) -> Result<Comment> {
     let ref_name = comment_thread_ref(thread_id);
 
@@ -421,7 +477,7 @@ pub fn reply_to_thread(
     let message = build_message(body, &trailers);
     let tree = build_comment_tree(repo, body, anchor, context_lines)?;
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
-    let entry = repo.append(&ref_name, &message, tree, Some(parent))?;
+    let entry = append_with_sig(repo, &ref_name, &message, tree, Some(parent), author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
     Ok(comment)
 }
@@ -435,6 +491,7 @@ pub fn resolve_thread(
     thread_id: &str,
     reply_to_oid: &str,
     message: Option<&str>,
+    author: Option<&git2::Signature<'_>>,
 ) -> Result<Comment> {
     let ref_name = comment_thread_ref(thread_id);
     let anchor_oid = tip_anchor_oid(repo, &ref_name).unwrap_or_default();
@@ -455,7 +512,7 @@ pub fn resolve_thread(
     };
     let tree = build_comment_tree(repo, body, inherited_anchor.as_ref(), None)?;
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
-    let entry = repo.append(&ref_name, &msg, tree, Some(parent))?;
+    let entry = append_with_sig(repo, &ref_name, &msg, tree, Some(parent), author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
     Ok(comment)
 }
@@ -471,6 +528,7 @@ pub fn edit_in_thread(
     new_body: &str,
     anchor: Option<&Anchor>,
     context_lines: Option<&str>,
+    author: Option<&git2::Signature<'_>>,
 ) -> Result<Comment> {
     let ref_name = comment_thread_ref(thread_id);
     let parent = resolve_thread_oid(repo, &ref_name, original_oid)?;
@@ -510,7 +568,7 @@ pub fn edit_in_thread(
         },
         context_lines,
     )?;
-    let entry = repo.append(&ref_name, &message, tree, Some(parent))?;
+    let entry = append_with_sig(repo, &ref_name, &message, tree, Some(parent), author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
     Ok(comment)
 }

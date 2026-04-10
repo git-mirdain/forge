@@ -118,6 +118,7 @@ impl Store<'_> {
         body: &str,
         labels: &[&str],
         assignees: &[&str],
+        author: Option<&git2::Signature<'_>>,
     ) -> Result<Issue> {
         validate_label_assignee_values(labels, assignees)?;
         let label_paths: Vec<String> = labels.iter().map(|l| format!("labels/{l}")).collect();
@@ -141,7 +142,7 @@ impl Store<'_> {
             &IdStrategy::CommitOid,
             &mutations,
             "create issue",
-            None,
+            author,
         )?;
 
         Ok(Issue {

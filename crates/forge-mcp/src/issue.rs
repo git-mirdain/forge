@@ -104,6 +104,7 @@ impl ForgeMcpServer {
             params.body.as_deref().unwrap_or(""),
             &labels,
             &assignees,
+            None,
         ) {
             Ok(issue) => facet_json::to_string_pretty(&issue).map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),

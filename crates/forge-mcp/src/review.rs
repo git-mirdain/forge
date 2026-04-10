@@ -206,6 +206,7 @@ impl ForgeMcpServer {
             params.body.as_deref().unwrap_or(""),
             &target,
             params.source_ref.as_deref(),
+            None,
         ) {
             Ok(review) => facet_json::to_string_pretty(&review).map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),

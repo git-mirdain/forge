@@ -42,7 +42,8 @@ fn create_thread_produces_ref() {
         start_line: Some(10),
         end_line: Some(20),
     };
-    let (thread_id, root) = create_thread(&repo, "first comment", Some(&anchor), None).unwrap();
+    let (thread_id, root) =
+        create_thread(&repo, "first comment", Some(&anchor), None, None).unwrap();
     assert!(!thread_id.is_empty());
     assert_eq!(root.body, "first comment");
 
@@ -59,7 +60,7 @@ fn thread_tree_roundtrip() {
         start_line: Some(1),
         end_line: None,
     };
-    let (thread_id, _) = create_thread(&repo, "body text", Some(&anchor), None).unwrap();
+    let (thread_id, _) = create_thread(&repo, "body text", Some(&anchor), None, None).unwrap();
 
     let comments = list_thread_comments(&repo, &thread_id).unwrap();
     assert_eq!(comments.len(), 1);
@@ -83,9 +84,10 @@ fn thread_tree_roundtrip() {
 #[test]
 fn reply_appends_to_chain() {
     let (_dir, repo) = test_repo();
-    let (thread_id, root) = create_thread(&repo, "root", None, None).unwrap();
+    let (thread_id, root) = create_thread(&repo, "root", None, None, None).unwrap();
 
-    let reply = reply_to_thread(&repo, &thread_id, "reply text", &root.oid, None, None).unwrap();
+    let reply =
+        reply_to_thread(&repo, &thread_id, "reply text", &root.oid, None, None, None).unwrap();
     assert_eq!(reply.reply_to.as_deref(), Some(root.oid.as_str()));
 
     let all = list_thread_comments(&repo, &thread_id).unwrap();
@@ -95,9 +97,9 @@ fn reply_appends_to_chain() {
 #[test]
 fn resolve_thread_sets_resolved() {
     let (_dir, repo) = test_repo();
-    let (thread_id, root) = create_thread(&repo, "needs work", None, None).unwrap();
+    let (thread_id, root) = create_thread(&repo, "needs work", None, None, None).unwrap();
 
-    let resolution = resolve_thread(&repo, &thread_id, &root.oid, Some("done")).unwrap();
+    let resolution = resolve_thread(&repo, &thread_id, &root.oid, Some("done"), None).unwrap();
     assert!(resolution.resolved);
     assert_eq!(resolution.body, "done");
     assert_eq!(resolution.reply_to.as_deref(), Some(root.oid.as_str()));
@@ -106,9 +108,9 @@ fn resolve_thread_sets_resolved() {
 #[test]
 fn edit_in_thread_sets_replaces() {
     let (_dir, repo) = test_repo();
-    let (thread_id, root) = create_thread(&repo, "original", None, None).unwrap();
+    let (thread_id, root) = create_thread(&repo, "original", None, None, None).unwrap();
 
-    let edited = edit_in_thread(&repo, &thread_id, &root.oid, "updated", None, None).unwrap();
+    let edited = edit_in_thread(&repo, &thread_id, &root.oid, "updated", None, None, None).unwrap();
     assert_eq!(edited.body, "updated");
     assert_eq!(edited.replaces.as_deref(), Some(root.oid.as_str()));
 }
@@ -116,9 +118,9 @@ fn edit_in_thread_sets_replaces() {
 #[test]
 fn list_thread_returns_tip_first() {
     let (_dir, repo) = test_repo();
-    let (thread_id, root) = create_thread(&repo, "first", None, None).unwrap();
-    let r1 = reply_to_thread(&repo, &thread_id, "second", &root.oid, None, None).unwrap();
-    reply_to_thread(&repo, &thread_id, "third", &r1.oid, None, None).unwrap();
+    let (thread_id, root) = create_thread(&repo, "first", None, None, None).unwrap();
+    let r1 = reply_to_thread(&repo, &thread_id, "second", &root.oid, None, None, None).unwrap();
+    reply_to_thread(&repo, &thread_id, "third", &r1.oid, None, None, None).unwrap();
 
     let all = list_thread_comments(&repo, &thread_id).unwrap();
     assert_eq!(all.len(), 3);
@@ -129,8 +131,8 @@ fn list_thread_returns_tip_first() {
 #[test]
 fn two_threads_no_contention() {
     let (_dir, repo) = test_repo();
-    let (id1, _) = create_thread(&repo, "thread one", None, None).unwrap();
-    let (id2, _) = create_thread(&repo, "thread two", None, None).unwrap();
+    let (id1, _) = create_thread(&repo, "thread one", None, None, None).unwrap();
+    let (id2, _) = create_thread(&repo, "thread two", None, None, None).unwrap();
 
     assert_ne!(id1, id2);
 
@@ -145,7 +147,7 @@ fn two_threads_no_contention() {
 #[test]
 fn comment_id_trailer_consistent() {
     let (_dir, repo) = test_repo();
-    let (thread_id, root) = create_thread(&repo, "msg", None, None).unwrap();
+    let (thread_id, root) = create_thread(&repo, "msg", None, None, None).unwrap();
     let ref_name = comment_thread_ref(&thread_id);
     let tip = repo
         .find_reference(&ref_name)
@@ -164,8 +166,8 @@ fn anchor_trailer_on_every_commit() {
         start_line: None,
         end_line: None,
     };
-    let (thread_id, root) = create_thread(&repo, "first", Some(&anchor), None).unwrap();
-    reply_to_thread(&repo, &thread_id, "second", &root.oid, None, None).unwrap();
+    let (thread_id, root) = create_thread(&repo, "first", Some(&anchor), None, None).unwrap();
+    reply_to_thread(&repo, &thread_id, "second", &root.oid, None, None, None).unwrap();
 
     let ref_name = comment_thread_ref(&thread_id);
     let mut commit = repo
@@ -212,7 +214,7 @@ fn context_lines_roundtrip() {
         end_line: Some(3),
     };
     let (thread_id, _) =
-        create_thread(&repo, "context comment", Some(&anchor), Some(context)).unwrap();
+        create_thread(&repo, "context comment", Some(&anchor), Some(context), None).unwrap();
 
     let comments = list_thread_comments(&repo, &thread_id).unwrap();
     assert_eq!(comments[0].context_lines.as_deref(), Some(context));
@@ -229,7 +231,7 @@ fn rebuild_index_and_lookup() {
         start_line: None,
         end_line: None,
     };
-    let (thread_id, _) = create_thread(&repo, "indexed", Some(&anchor), None).unwrap();
+    let (thread_id, _) = create_thread(&repo, "indexed", Some(&anchor), None, None).unwrap();
 
     rebuild_comments_index(&repo).unwrap();
 
@@ -247,7 +249,8 @@ fn find_threads_by_object_uses_index() {
         start_line: Some(5),
         end_line: Some(10),
     };
-    let (thread_id, _) = create_thread(&repo, "indexed comment", Some(&anchor), None).unwrap();
+    let (thread_id, _) =
+        create_thread(&repo, "indexed comment", Some(&anchor), None, None).unwrap();
 
     rebuild_comments_index(&repo).unwrap();
 
@@ -264,7 +267,7 @@ fn find_threads_fallback_without_index() {
         start_line: None,
         end_line: None,
     };
-    let (thread_id, _) = create_thread(&repo, "unindexed", Some(&anchor), None).unwrap();
+    let (thread_id, _) = create_thread(&repo, "unindexed", Some(&anchor), None, None).unwrap();
 
     // Do NOT rebuild the index — fallback scan must still find the thread.
     let threads = find_threads_by_object(&repo, &blob_oid).unwrap();
@@ -280,7 +283,7 @@ fn find_threads_delete_index_falls_back_to_scan() {
         start_line: None,
         end_line: None,
     };
-    let (thread_id, _) = create_thread(&repo, "scan fallback", Some(&anchor), None).unwrap();
+    let (thread_id, _) = create_thread(&repo, "scan fallback", Some(&anchor), None, None).unwrap();
 
     rebuild_comments_index(&repo).unwrap();
     // Delete the index ref to force fallback.
@@ -299,7 +302,9 @@ fn find_threads_delete_index_falls_back_to_scan() {
 fn executor_create_and_list_comments_on_issue() {
     let (dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let issue = store.create_issue("Test issue", "body", &[], &[]).unwrap();
+    let issue = store
+        .create_issue("Test issue", "body", &[], &[], None)
+        .unwrap();
     let exec = Executor::from_path(dir.path()).unwrap();
 
     let anchor = git_forge::comment::Anchor {
@@ -307,8 +312,12 @@ fn executor_create_and_list_comments_on_issue() {
         start_line: None,
         end_line: None,
     };
-    let (_, c1) = exec.create_comment("first", Some(&anchor), None).unwrap();
-    let (_, c2) = exec.create_comment("second", Some(&anchor), None).unwrap();
+    let (_, c1) = exec
+        .create_comment("first", Some(&anchor), None, None)
+        .unwrap();
+    let (_, c2) = exec
+        .create_comment("second", Some(&anchor), None, None)
+        .unwrap();
 
     let comments = exec.list_comments_on(&issue.oid).unwrap();
     assert_eq!(comments.len(), 2);
@@ -322,7 +331,7 @@ fn executor_reply_and_resolve_thread() {
     let (dir, repo) = test_repo();
     let store = Store::new(&repo);
     let issue = store
-        .create_issue("Thread issue", "body", &[], &[])
+        .create_issue("Thread issue", "body", &[], &[], None)
         .unwrap();
     let exec = Executor::from_path(dir.path()).unwrap();
 
@@ -331,14 +340,16 @@ fn executor_reply_and_resolve_thread() {
         start_line: None,
         end_line: None,
     };
-    let (thread_id, root) = exec.create_comment("root", Some(&anchor), None).unwrap();
+    let (thread_id, root) = exec
+        .create_comment("root", Some(&anchor), None, None)
+        .unwrap();
     let reply = exec
-        .reply_comment(&thread_id, "reply text", &root.oid, None, None)
+        .reply_comment(&thread_id, "reply text", &root.oid, None, None, None)
         .unwrap();
     assert_eq!(reply.reply_to.as_deref(), Some(root.oid.as_str()));
 
     let resolved = exec
-        .resolve_comment_thread(&thread_id, &reply.oid, Some("done"))
+        .resolve_comment_thread(&thread_id, &reply.oid, Some("done"), None)
         .unwrap();
     assert!(resolved.resolved);
     assert_eq!(resolved.body, "done");
@@ -356,7 +367,7 @@ fn executor_create_comment_anchored_to_blob() {
         end_line: Some(1),
     };
     let (thread_id, _) = exec
-        .create_comment("blob comment", Some(&anchor), None)
+        .create_comment("blob comment", Some(&anchor), None, None)
         .unwrap();
 
     let comments = exec.list_comments_on(&blob_oid).unwrap();
@@ -390,14 +401,14 @@ fn executor_retarget_does_not_migrate_comments() {
         base: None,
         path: None,
     };
-    let review = exec.create_review("r", "", &target, None).unwrap();
+    let review = exec.create_review("r", "", &target, None, None).unwrap();
 
     let anchor = git_forge::comment::Anchor {
         oid: old_blob_oid.clone(),
         start_line: Some(2),
         end_line: Some(2),
     };
-    exec.create_comment("on line 2", Some(&anchor), None)
+    exec.create_comment("on line 2", Some(&anchor), None, None)
         .unwrap();
 
     exec.retarget_review(&review.oid, Some(&new_tree), None)
@@ -422,7 +433,9 @@ fn executor_resolve_anchor_spec_raw_oid() {
 fn executor_resolve_anchor_spec_issue() {
     let (dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let issue = store.create_issue("spec issue", "body", &[], &[]).unwrap();
+    let issue = store
+        .create_issue("spec issue", "body", &[], &[], None)
+        .unwrap();
     let exec = Executor::from_path(dir.path()).unwrap();
     let spec = format!(
         "issue:{}",

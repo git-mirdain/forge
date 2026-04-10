@@ -389,7 +389,7 @@ async fn export_review_creates_github_pr() {
         path: None,
     };
     let created = store
-        .create_review("Local PR", "details", &target, Some("feature"))
+        .create_review("Local PR", "details", &target, Some("feature"), None)
         .unwrap();
 
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();
@@ -429,7 +429,7 @@ async fn export_review_comments() {
         path: None,
     };
     let review = store
-        .create_review("PR", "", &target, Some("feature"))
+        .create_review("PR", "", &target, Some("feature"), None)
         .unwrap();
 
     // Export the review first.
@@ -441,7 +441,7 @@ async fn export_review_comments() {
         start_line: None,
         end_line: None,
     };
-    create_thread(&repo, "review comment", Some(&anchor), None).unwrap();
+    create_thread(&repo, "review comment", Some(&anchor), None, None).unwrap();
 
     // Re-export should pick up the comment.
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();
@@ -467,7 +467,7 @@ async fn roundtrip_reviews_no_duplicates() {
         path: None,
     };
     store
-        .create_review("Local PR", "body", &target, Some("feature"))
+        .create_review("Local PR", "body", &target, Some("feature"), None)
         .unwrap();
 
     // Export creates sync state mapping reviews/7 → oid.
@@ -550,7 +550,7 @@ async fn export_anchored_review_comment_uses_review_api() {
         path: None,
     };
     let review = store
-        .create_review("PR", "", &target, Some("feature"))
+        .create_review("PR", "", &target, Some("feature"), None)
         .unwrap();
 
     export_reviews(&repo, &cfg, &client).await.unwrap();
@@ -564,7 +564,7 @@ async fn export_anchored_review_comment_uses_review_api() {
         start_line: Some(1),
         end_line: Some(1),
     };
-    create_thread(&repo, "line note", Some(&anchor), None).unwrap();
+    create_thread(&repo, "line note", Some(&anchor), None, None).unwrap();
 
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();
     assert_eq!(report.exported, 1);
@@ -588,7 +588,7 @@ async fn export_review_without_source_ref_is_unexportable() {
         path: None,
     };
     store
-        .create_review("No branch", "body", &target, None)
+        .create_review("No branch", "body", &target, None, None)
         .unwrap();
 
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();
@@ -611,7 +611,7 @@ async fn export_review_with_sha_source_ref_is_unexportable() {
         path: None,
     };
     store
-        .create_review("SHA ref", "body", &target, Some(&commit))
+        .create_review("SHA ref", "body", &target, Some(&commit), None)
         .unwrap();
 
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();
@@ -634,7 +634,7 @@ async fn export_review_with_branch_source_ref_succeeds() {
         path: None,
     };
     store
-        .create_review("Branch PR", "body", &target, Some("my-feature"))
+        .create_review("Branch PR", "body", &target, Some("my-feature"), None)
         .unwrap();
 
     let report = export_reviews(&repo, &cfg, &client).await.unwrap();

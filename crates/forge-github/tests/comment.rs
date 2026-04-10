@@ -278,7 +278,9 @@ async fn export_issue_comment_creates_github_comment() {
 
     // Create and export an issue.
     let store = Store::new(&repo);
-    let issue = store.create_issue("Local issue", "body", &[], &[]).unwrap();
+    let issue = store
+        .create_issue("Local issue", "body", &[], &[], None)
+        .unwrap();
     export_issues(&repo, &cfg, &client).await.unwrap();
 
     // Add a local comment.
@@ -287,7 +289,7 @@ async fn export_issue_comment_creates_github_comment() {
         start_line: None,
         end_line: None,
     };
-    let (_tid, comment) = create_thread(&repo, "my comment", Some(&anchor), None).unwrap();
+    let (_tid, comment) = create_thread(&repo, "my comment", Some(&anchor), None, None).unwrap();
 
     // Re-export: should pick up the new comment.
     let report = export_issues(&repo, &cfg, &client).await.unwrap();
@@ -313,7 +315,9 @@ async fn export_comment_skips_already_exported() {
     let client = CommentMockClient::new(Vec::new(), HashMap::new());
 
     let store = Store::new(&repo);
-    let issue = store.create_issue("Local issue", "body", &[], &[]).unwrap();
+    let issue = store
+        .create_issue("Local issue", "body", &[], &[], None)
+        .unwrap();
     export_issues(&repo, &cfg, &client).await.unwrap();
 
     let anchor = Anchor {
@@ -321,7 +325,7 @@ async fn export_comment_skips_already_exported() {
         start_line: None,
         end_line: None,
     };
-    create_thread(&repo, "my comment", Some(&anchor), None).unwrap();
+    create_thread(&repo, "my comment", Some(&anchor), None, None).unwrap();
 
     let r1 = export_issues(&repo, &cfg, &client).await.unwrap();
     assert_eq!(r1.exported, 1);
@@ -339,7 +343,7 @@ async fn roundtrip_comments_no_duplicates() {
     // First: export a local issue and comment.
     let export_client = CommentMockClient::new(Vec::new(), HashMap::new());
     let store = Store::new(&repo);
-    let issue = store.create_issue("Bug", "body", &[], &[]).unwrap();
+    let issue = store.create_issue("Bug", "body", &[], &[], None).unwrap();
     export_issues(&repo, &cfg, &export_client).await.unwrap();
 
     let anchor = Anchor {
@@ -347,7 +351,7 @@ async fn roundtrip_comments_no_duplicates() {
         start_line: None,
         end_line: None,
     };
-    create_thread(&repo, "a comment", Some(&anchor), None).unwrap();
+    create_thread(&repo, "a comment", Some(&anchor), None, None).unwrap();
     export_issues(&repo, &cfg, &export_client).await.unwrap();
 
     // Now import: the comment from GitHub would have the same content.
@@ -466,7 +470,7 @@ async fn standalone_export_issue_comments() {
 
     // Create and export an issue first.
     let store = Store::new(&repo);
-    let issue = store.create_issue("Local", "body", &[], &[]).unwrap();
+    let issue = store.create_issue("Local", "body", &[], &[], None).unwrap();
     export_issues(&repo, &cfg, &client).await.unwrap();
 
     // Add a comment and export via standalone function.
@@ -475,7 +479,7 @@ async fn standalone_export_issue_comments() {
         start_line: None,
         end_line: None,
     };
-    create_thread(&repo, "standalone export", Some(&anchor), None).unwrap();
+    create_thread(&repo, "standalone export", Some(&anchor), None, None).unwrap();
 
     let report = export_issue_comments(&repo, &cfg, &client, &issue.oid)
         .await

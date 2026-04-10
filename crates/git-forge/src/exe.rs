@@ -65,14 +65,39 @@ impl Executor {
     ///
     /// # Errors
     /// Returns an error if a git operation fails.
+    /// Build a `git2::Signature` from an actor handle.
+    ///
+    /// Looks up the actor's first name and email from the actor registry.
+    ///
+    /// # Errors
+    /// Returns [`Error::NotFound`] if the handle does not exist, or
+    /// [`Error::Config`] if the actor has no names registered.
+    pub fn actor_sig(&self, handle: &str) -> Result<git2::Signature<'static>> {
+        let store = self.store();
+        let actor_id = store.resolve_actor_handle(handle)?;
+        let actor = store.get_actor(actor_id.as_str())?;
+        let name = actor
+            .names
+            .first()
+            .ok_or_else(|| Error::Config(format!("actor {handle} has no names registered")))?;
+        let email = actor.emails.first().map_or("", String::as_str);
+        Ok(git2::Signature::now(name, email)?)
+    }
+
+    /// Create a new issue.
+    ///
+    /// # Errors
+    /// Returns an error if a git operation fails.
     pub fn create_issue(
         &self,
         title: &str,
         body: &str,
         labels: &[&str],
         assignees: &[&str],
+        author: Option<&git2::Signature<'_>>,
     ) -> Result<Issue> {
-        self.store().create_issue(title, body, labels, assignees)
+        self.store()
+            .create_issue(title, body, labels, assignees, author)
     }
 
     /// Fetch an issue by display ID or OID prefix.
@@ -137,8 +162,10 @@ impl Executor {
         body: &str,
         target: &ReviewTarget,
         source_ref: Option<&str>,
+        author: Option<&git2::Signature<'_>>,
     ) -> Result<Review> {
-        self.store().create_review(title, body, target, source_ref)
+        self.store()
+            .create_review(title, body, target, source_ref, author)
     }
 
     /// Fetch a review by display ID or OID prefix.
@@ -211,6 +238,7 @@ impl Executor {
                 path: None,
             },
             None,
+            None,
         )
     }
 
@@ -272,6 +300,7 @@ impl Executor {
         body: &str,
         anchor: Option<&Anchor>,
         context_lines: Option<&str>,
+        author: Option<&git2::Signature<'_>>,
     ) -> Result<(String, Comment)> {
         let ctx = match anchor {
             Some(a) if a.start_line.is_some() && context_lines.is_none() => {
@@ -279,7 +308,7 @@ impl Executor {
             }
             _ => context_lines.map(str::to_string),
         };
-        create_thread(&self.repo, body, anchor, ctx.as_deref())
+        create_thread(&self.repo, body, anchor, ctx.as_deref(), author)
     }
 
     /// Append a reply to an existing comment thread.
@@ -293,6 +322,7 @@ impl Executor {
         reply_to_oid: &str,
         anchor: Option<&Anchor>,
         context_lines: Option<&str>,
+        author: Option<&git2::Signature<'_>>,
     ) -> Result<Comment> {
         let ctx = match anchor {
             Some(a) if a.start_line.is_some() && context_lines.is_none() => {
@@ -307,6 +337,7 @@ impl Executor {
             reply_to_oid,
             anchor,
             ctx.as_deref(),
+            author,
         )
     }
 
@@ -319,8 +350,9 @@ impl Executor {
         thread_id: &str,
         reply_to_oid: &str,
         message: Option<&str>,
+        author: Option<&git2::Signature<'_>>,
     ) -> Result<Comment> {
-        resolve_thread(&self.repo, thread_id, reply_to_oid, message)
+        resolve_thread(&self.repo, thread_id, reply_to_oid, message, author)
     }
 
     /// List all comments anchored to a git object (blob, commit, tree, or tag).
@@ -1647,7 +1679,9 @@ impl Executor {
                     body,
                     file,
                     interactive,
+                    author,
                 } => {
+                    let author_sig = author.as_deref().map(|h| self.actor_sig(h)).transpose()?;
                     let resolved = crate::input::resolve_body(body.clone(), file.clone())?;
                     let interactive = *interactive || should_interact(resolved.is_none());
                     let body = if interactive {
@@ -1657,7 +1691,8 @@ impl Executor {
                     };
                     let oid = self.resolve_anchor_spec(on)?;
                     let anchor = build_v2_anchor(&oid, lines.as_deref());
-                    let (thread_id, comment) = self.create_comment(&body, Some(&anchor), None)?;
+                    let (thread_id, comment) =
+                        self.create_comment(&body, Some(&anchor), None, author_sig.as_ref())?;
                     if cli.json {
                         println!(
                             "{}",
@@ -1674,7 +1709,9 @@ impl Executor {
                     body,
                     file,
                     interactive,
+                    author,
                 } => {
+                    let author_sig = author.as_deref().map(|h| self.actor_sig(h)).transpose()?;
                     let thread_id = find_thread_by_comment(&self.repo, reply_to)?
                         .ok_or_else(|| Error::NotFound(reply_to.clone()))?;
                     let resolved = crate::input::resolve_body(body.clone(), file.clone())?;
@@ -1684,7 +1721,14 @@ impl Executor {
                     } else {
                         resolved.unwrap_or_default()
                     };
-                    let comment = self.reply_comment(&thread_id, &body, reply_to, None, None)?;
+                    let comment = self.reply_comment(
+                        &thread_id,
+                        &body,
+                        reply_to,
+                        None,
+                        None,
+                        author_sig.as_ref(),
+                    )?;
                     print_comment(&comment, cli.json);
                 }
 
@@ -1693,7 +1737,9 @@ impl Executor {
                     message,
                     file,
                     interactive,
+                    author,
                 } => {
+                    let author_sig = author.as_deref().map(|h| self.actor_sig(h)).transpose()?;
                     let thread_id = find_thread_by_comment(&self.repo, comment)?
                         .ok_or_else(|| Error::NotFound(comment.clone()))?;
                     let resolved = crate::input::resolve_body(message.clone(), file.clone())?;
@@ -1703,15 +1749,32 @@ impl Executor {
                     } else {
                         resolved
                     };
-                    let result =
-                        self.resolve_comment_thread(&thread_id, comment, resolved.as_deref())?;
+                    let result = self.resolve_comment_thread(
+                        &thread_id,
+                        comment,
+                        resolved.as_deref(),
+                        author_sig.as_ref(),
+                    )?;
                     print_comment(&result, cli.json);
                 }
 
-                CommentCommand::Edit { comment, body } => {
+                CommentCommand::Edit {
+                    comment,
+                    body,
+                    author,
+                } => {
+                    let author_sig = author.as_deref().map(|h| self.actor_sig(h)).transpose()?;
                     let thread_id = find_thread_by_comment(&self.repo, comment)?
                         .ok_or_else(|| Error::NotFound(comment.clone()))?;
-                    let result = edit_in_thread(&self.repo, &thread_id, comment, body, None, None)?;
+                    let result = edit_in_thread(
+                        &self.repo,
+                        &thread_id,
+                        comment,
+                        body,
+                        None,
+                        None,
+                        author_sig.as_ref(),
+                    )?;
                     print_comment(&result, cli.json);
                 }
 
@@ -1780,7 +1843,9 @@ impl Executor {
                     base,
                     source_ref,
                     interactive,
+                    author,
                 } => {
+                    let author_sig = author.as_deref().map(|h| self.actor_sig(h)).transpose()?;
                     let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
                     let interactive =
                         *interactive || should_interact(title.is_none() && resolved_body.is_none());
@@ -1818,7 +1883,13 @@ impl Executor {
                         base: base_oid,
                         path: None,
                     };
-                    let review = self.create_review(title, body, &target, source_ref.as_deref())?;
+                    let review = self.create_review(
+                        title,
+                        body,
+                        &target,
+                        source_ref.as_deref(),
+                        author_sig.as_ref(),
+                    )?;
                     print_review(&review, cli.json);
                 }
 
@@ -2038,7 +2109,9 @@ impl Executor {
                     labels,
                     assignees,
                     interactive,
+                    author,
                 } => {
+                    let author_sig = author.as_deref().map(|h| self.actor_sig(h)).transpose()?;
                     let resolved_body = crate::input::resolve_body(body.clone(), file.clone())?;
                     let interactive =
                         *interactive || should_interact(title.is_none() && resolved_body.is_none());
@@ -2055,7 +2128,13 @@ impl Executor {
                     };
                     let labels_ref: Vec<&str> = labels.iter().map(String::as_str).collect();
                     let assignees_ref: Vec<&str> = assignees.iter().map(String::as_str).collect();
-                    let issue = self.create_issue(&title, &body, &labels_ref, &assignees_ref)?;
+                    let issue = self.create_issue(
+                        &title,
+                        &body,
+                        &labels_ref,
+                        &assignees_ref,
+                        author_sig.as_ref(),
+                    )?;
                     print_issue(&issue, cli.json);
                 }
 

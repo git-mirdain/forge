@@ -37,7 +37,7 @@ fn create_issue_basic_fields() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let issue = store
-        .create_issue("Fix the bug", "some details", &[], &[])
+        .create_issue("Fix the bug", "some details", &[], &[], None)
         .unwrap();
 
     assert_eq!(issue.title, "Fix the bug");
@@ -61,7 +61,13 @@ fn create_issue_with_labels_and_assignees() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let issue = store
-        .create_issue("Crash", "oops", &["bug", "critical"], &["alice", "bob"])
+        .create_issue(
+            "Crash",
+            "oops",
+            &["bug", "critical"],
+            &["alice", "bob"],
+            None,
+        )
         .unwrap();
 
     let mut labels = issue.labels.clone();
@@ -77,7 +83,7 @@ fn create_issue_with_labels_and_assignees() {
 fn create_issue_ref_exists_in_repo() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let issue = store.create_issue("Ref test", "", &[], &[]).unwrap();
+    let issue = store.create_issue("Ref test", "", &[], &[], None).unwrap();
 
     let ref_name = format!("refs/forge/issue/{}", issue.oid);
     assert!(repo.find_reference(&ref_name).is_ok());
@@ -87,8 +93,10 @@ fn create_issue_ref_exists_in_repo() {
 fn create_two_issues_have_distinct_oids() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let a = store.create_issue("First", "body", &[], &[]).unwrap();
-    let b = store.create_issue("Second", "body", &[], &[]).unwrap();
+    let a = store.create_issue("First", "body", &[], &[], None).unwrap();
+    let b = store
+        .create_issue("Second", "body", &[], &[], None)
+        .unwrap();
     assert_ne!(a.oid, b.oid);
 }
 
@@ -97,7 +105,13 @@ fn create_issue_unicode_fields() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let issue = store
-        .create_issue("日本語タイトル", "内容：テスト", &["バグ"], &["ユーザー"])
+        .create_issue(
+            "日本語タイトル",
+            "内容：テスト",
+            &["バグ"],
+            &["ユーザー"],
+            None,
+        )
         .unwrap();
 
     let fetched = store.get_issue(&issue.oid).unwrap();
@@ -115,7 +129,7 @@ fn create_issue_unicode_fields() {
 fn get_issue_by_full_oid() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "body", &[], &[]).unwrap();
+    let created = store.create_issue("Title", "body", &[], &[], None).unwrap();
 
     let fetched = store.get_issue(&created.oid).unwrap();
     assert_eq!(fetched.oid, created.oid);
@@ -127,7 +141,7 @@ fn get_issue_by_full_oid() {
 fn get_issue_by_oid_prefix() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "body", &[], &[]).unwrap();
+    let created = store.create_issue("Title", "body", &[], &[], None).unwrap();
 
     let prefix = &created.oid[..8];
     let fetched = store.get_issue(prefix).unwrap();
@@ -138,7 +152,7 @@ fn get_issue_by_oid_prefix() {
 fn get_issue_by_display_id() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "body", &[], &[]).unwrap();
+    let created = store.create_issue("Title", "body", &[], &[], None).unwrap();
     store
         .write_display_id(ISSUE_INDEX, "MY#1", &created.oid)
         .unwrap();
@@ -205,9 +219,9 @@ fn list_issues_empty_repo() {
 fn list_issues_returns_all() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    store.create_issue("Alpha", "a", &[], &[]).unwrap();
-    store.create_issue("Beta", "b", &[], &[]).unwrap();
-    store.create_issue("Gamma", "c", &[], &[]).unwrap();
+    store.create_issue("Alpha", "a", &[], &[], None).unwrap();
+    store.create_issue("Beta", "b", &[], &[], None).unwrap();
+    store.create_issue("Gamma", "c", &[], &[], None).unwrap();
 
     let issues = store.list_issues().unwrap();
     assert_eq!(issues.len(), 3);
@@ -222,7 +236,13 @@ fn list_issues_fields_round_trip() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     store
-        .create_issue("Title", "body text", &["label-a", "label-b"], &["user1"])
+        .create_issue(
+            "Title",
+            "body text",
+            &["label-a", "label-b"],
+            &["user1"],
+            None,
+        )
         .unwrap();
 
     let issues = store.list_issues().unwrap();
@@ -264,8 +284,8 @@ fn list_by_state_empty_repo() {
 fn list_by_state_filters_correctly() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let to_close = store.create_issue("Close me", "", &[], &[]).unwrap();
-    store.create_issue("Keep open", "", &[], &[]).unwrap();
+    let to_close = store.create_issue("Close me", "", &[], &[], None).unwrap();
+    store.create_issue("Keep open", "", &[], &[], None).unwrap();
 
     store
         .update_issue(
@@ -296,7 +316,7 @@ fn list_by_state_all_open_by_default() {
     let store = Store::new(&repo);
     for i in 0..5 {
         store
-            .create_issue(&format!("Issue {i}"), "", &[], &[])
+            .create_issue(&format!("Issue {i}"), "", &[], &[], None)
             .unwrap();
     }
 
@@ -314,7 +334,9 @@ fn list_by_state_all_open_by_default() {
 fn update_issue_title() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Old title", "body", &[], &[]).unwrap();
+    let created = store
+        .create_issue("Old title", "body", &[], &[], None)
+        .unwrap();
 
     let updated = store
         .update_issue(
@@ -338,7 +360,9 @@ fn update_issue_title() {
 fn update_issue_body() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "old body", &[], &[]).unwrap();
+    let created = store
+        .create_issue("Title", "old body", &[], &[], None)
+        .unwrap();
 
     let updated = store
         .update_issue(
@@ -362,7 +386,7 @@ fn update_issue_body() {
 fn update_issue_state_open_to_closed() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "", &[], &[]).unwrap();
+    let created = store.create_issue("Title", "", &[], &[], None).unwrap();
     assert_eq!(created.state, IssueState::Open);
 
     let updated = store
@@ -391,7 +415,9 @@ fn update_issue_state_open_to_closed() {
 fn update_issue_add_label() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "", &["existing"], &[]).unwrap();
+    let created = store
+        .create_issue("Title", "", &["existing"], &[], None)
+        .unwrap();
 
     let updated = store
         .update_issue(
@@ -417,7 +443,7 @@ fn update_issue_remove_label() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let created = store
-        .create_issue("Title", "", &["keep", "remove-me"], &[])
+        .create_issue("Title", "", &["keep", "remove-me"], &[], None)
         .unwrap();
 
     let updated = store
@@ -441,7 +467,9 @@ fn update_issue_remove_label() {
 fn update_issue_remove_nonexistent_label_is_ok() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "", &["bug"], &[]).unwrap();
+    let created = store
+        .create_issue("Title", "", &["bug"], &[], None)
+        .unwrap();
 
     // Removing a label that was never there should not error.
     let updated = store
@@ -466,7 +494,7 @@ fn update_issue_add_and_remove_assignees() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let created = store
-        .create_issue("Title", "", &[], &["alice", "bob"])
+        .create_issue("Title", "", &[], &["alice", "bob"], None)
         .unwrap();
 
     let updated = store
@@ -493,7 +521,7 @@ fn update_issue_all_mutations_at_once() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let created = store
-        .create_issue("Old", "old body", &["bug"], &["alice"])
+        .create_issue("Old", "old body", &["bug"], &["alice"], None)
         .unwrap();
 
     let updated = store
@@ -543,7 +571,7 @@ fn update_issue_no_op_mutation_preserves_fields() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
     let created = store
-        .create_issue("Title", "body", &["bug"], &["alice"])
+        .create_issue("Title", "body", &["bug"], &["alice"], None)
         .unwrap();
 
     // All Nones and empty slices — should be a no-op.
@@ -617,7 +645,7 @@ fn imported_issue_source_does_not_bleed_into_labels() {
 fn write_display_id_then_lookup() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "body", &[], &[]).unwrap();
+    let created = store.create_issue("Title", "body", &[], &[], None).unwrap();
 
     store
         .write_display_id(ISSUE_INDEX, "ACME#7", &created.oid)
@@ -632,8 +660,8 @@ fn write_display_id_then_lookup() {
 fn write_display_id_overwrites_same_key() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let a = store.create_issue("A", "", &[], &[]).unwrap();
-    let b = store.create_issue("B", "", &[], &[]).unwrap();
+    let a = store.create_issue("A", "", &[], &[], None).unwrap();
+    let b = store.create_issue("B", "", &[], &[], None).unwrap();
 
     // Point X#1 at a, then remap to b.
     store.write_display_id(ISSUE_INDEX, "X#1", &a.oid).unwrap();
@@ -647,7 +675,7 @@ fn write_display_id_overwrites_same_key() {
 fn write_display_id_multiple_ids_coexist() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "", &[], &[]).unwrap();
+    let created = store.create_issue("Title", "", &[], &[], None).unwrap();
 
     store
         .write_display_id(ISSUE_INDEX, "GH#1", &created.oid)
@@ -664,7 +692,7 @@ fn write_display_id_multiple_ids_coexist() {
 fn zero_padded_display_id_resolves() {
     let (_dir, repo) = test_repo();
     let store = Store::new(&repo);
-    let created = store.create_issue("Title", "", &[], &[]).unwrap();
+    let created = store.create_issue("Title", "", &[], &[], None).unwrap();
 
     store
         .write_display_id(ISSUE_INDEX, "GH#4", &created.oid)

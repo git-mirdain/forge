@@ -285,7 +285,7 @@ fn checkout_review_creates_parent_dir_only() {
         path: None,
     };
     let review = exec
-        .create_review("checkout test", "", &target, None)
+        .create_review("checkout test", "", &target, None, None)
         .unwrap();
 
     let wt_dir = dir.path().join("review-wt");
@@ -309,7 +309,9 @@ fn checkout_review_recovers_from_stale_admin_dir() {
         base: None,
         path: None,
     };
-    let review = exec.create_review("stale test", "", &target, None).unwrap();
+    let review = exec
+        .create_review("stale test", "", &target, None, None)
+        .unwrap();
 
     let wt_name = format!("forge-review-{}", &review.oid[..12]);
 
@@ -339,7 +341,7 @@ fn checkout_review_idempotent() {
         path: None,
     };
     let review = exec
-        .create_review("idempotent test", "", &target, None)
+        .create_review("idempotent test", "", &target, None, None)
         .unwrap();
 
     let wt_dir = dir.path().join("review-wt");
@@ -366,7 +368,7 @@ fn checkout_done_recheckout() {
         path: None,
     };
     let review = exec
-        .create_review("roundtrip test", "", &target, None)
+        .create_review("roundtrip test", "", &target, None, None)
         .unwrap();
 
     let wt_dir = dir.path().join("review-wt");
@@ -420,7 +422,7 @@ fn retarget_updates_head() {
         path: None,
     };
     let review = exec
-        .create_review("test review", "", &target, None)
+        .create_review("test review", "", &target, None, None)
         .unwrap();
 
     let new_tree = make_tree(&repo, "lib.rs", "fn main() { todo!() }\n");

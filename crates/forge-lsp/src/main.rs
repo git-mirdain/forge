@@ -337,14 +337,14 @@ impl ForgeLanguageServer {
                     start_line: Some(line + 1),
                     end_line: Some(line + 1),
                 };
-                create_thread(&repo, &body, Some(&anchor), None)
+                create_thread(&repo, &body, Some(&anchor), None, None)
                     .map(|_| ())
                     .map_err(|e| e.to_string())
             }
             PendingComment::Reply { comment_oid } => {
                 match find_thread_by_comment(&repo, &comment_oid) {
                     Ok(Some(thread_id)) => {
-                        reply_to_thread(&repo, &thread_id, &body, &comment_oid, None, None)
+                        reply_to_thread(&repo, &thread_id, &body, &comment_oid, None, None, None)
                             .map(|_| ())
                             .map_err(|e| e.to_string())
                     }
@@ -756,7 +756,7 @@ impl LanguageServer for ForgeLanguageServer {
                 let Some(repo) = self.open_repo() else {
                     return Ok(None);
                 };
-                let _ = resolve_thread(&repo, thread_id, comment_oid, None);
+                let _ = resolve_thread(&repo, thread_id, comment_oid, None, None);
                 self.refresh().await;
                 self.publish_all_diagnostics().await;
             }

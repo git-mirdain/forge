@@ -106,7 +106,7 @@ impl ForgeMcpServer {
             start_line: params.start_line,
             end_line: params.end_line,
         };
-        match create_thread(&repo, &params.body, Some(&anchor), None) {
+        match create_thread(&repo, &params.body, Some(&anchor), None, None) {
             Ok((thread_id, comment)) => {
                 let comment_json =
                     facet_json::to_string_pretty(&comment).map_err(|e| e.to_string())?;
@@ -134,6 +134,7 @@ impl ForgeMcpServer {
             &params.reply_to_oid,
             None,
             None,
+            None,
         ) {
             Ok(comment) => facet_json::to_string_pretty(&comment).map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
@@ -154,6 +155,7 @@ impl ForgeMcpServer {
             &params.thread_id,
             &params.comment_oid,
             params.message.as_deref(),
+            None,
         ) {
             Ok(comment) => facet_json::to_string_pretty(&comment).map_err(|e| e.to_string()),
             Err(e) => Err(e.to_string()),
@@ -188,6 +190,7 @@ impl ForgeMcpServer {
             &params.thread_id,
             &params.comment_oid,
             &params.body,
+            None,
             None,
             None,
         ) {

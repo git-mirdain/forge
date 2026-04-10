@@ -348,6 +348,10 @@ pub enum CommentCommand {
         /// Prompt for body interactively.
         #[arg(long, short = 'i')]
         interactive: bool,
+
+        /// Actor handle to use as the commit author instead of the local git identity.
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Reply to an existing comment thread.
@@ -366,6 +370,10 @@ pub enum CommentCommand {
         /// Prompt for body interactively.
         #[arg(long, short = 'i')]
         interactive: bool,
+
+        /// Actor handle to use as the commit author instead of the local git identity.
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Resolve a comment thread.
@@ -384,6 +392,10 @@ pub enum CommentCommand {
         /// Prompt for message interactively.
         #[arg(long, short = 'i')]
         interactive: bool,
+
+        /// Actor handle to use as the commit author instead of the local git identity.
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Edit a comment in a thread.
@@ -395,6 +407,10 @@ pub enum CommentCommand {
         /// New body (Markdown).
         #[arg(long)]
         body: String,
+
+        /// Actor handle to use as the commit author instead of the local git identity.
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// List comment threads.
@@ -461,6 +477,10 @@ pub enum ReviewCommand {
         /// Prompt for title and description interactively.
         #[arg(long, short = 'i')]
         interactive: bool,
+
+        /// Actor handle to use as the commit author instead of the local git identity.
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Show a review.
@@ -607,6 +627,10 @@ pub enum IssueCommand {
         /// Prompt for all fields interactively.
         #[arg(long, short = 'i')]
         interactive: bool,
+
+        /// Actor handle to use as the commit author instead of the local git identity.
+        #[arg(long)]
+        author: Option<String>,
     },
 
     /// Show an issue.

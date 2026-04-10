@@ -148,7 +148,7 @@ async fn import_issue_comments_with_state(
             start_line: None,
             end_line: None,
         };
-        match create_thread(repo, body, Some(&anchor), None) {
+        match create_thread(repo, body, Some(&anchor), None, None) {
             Ok((_thread_id, created)) => {
                 state.insert(state_key, created.oid.clone());
                 report.imported += 1;
@@ -311,7 +311,7 @@ async fn import_review_comments_with_state(
             start_line: comment.line,
             end_line: comment.line,
         };
-        match create_thread(repo, body, Some(&anchor), None) {
+        match create_thread(repo, body, Some(&anchor), None, None) {
             Ok((_thread_id, created)) => {
                 state.insert(state_key, created.oid.clone());
                 report.imported += 1;

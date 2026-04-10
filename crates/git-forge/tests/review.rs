@@ -53,7 +53,7 @@ fn create_returns_oid() {
         path: None,
     };
     let review = store
-        .create_review("PR title", "description", &target, None)
+        .create_review("PR title", "description", &target, None, None)
         .unwrap();
     assert_eq!(review.oid.len(), 40);
     assert!(review.oid.chars().all(|c| c.is_ascii_hexdigit()));
@@ -71,7 +71,7 @@ fn create_stores_all_fields() {
         path: None,
     };
     let review = store
-        .create_review("My review", "detailed body", &target, None)
+        .create_review("My review", "detailed body", &target, None, None)
         .unwrap();
 
     assert_eq!(review.title, "My review");
@@ -102,7 +102,7 @@ fn create_with_commit_range_target() {
         path: None,
     };
     let review = store
-        .create_review("Range review", "", &target, None)
+        .create_review("Range review", "", &target, None, None)
         .unwrap();
     assert_eq!(review.target.head, commit2);
     assert_eq!(review.target.base, Some(commit));
@@ -121,7 +121,7 @@ fn create_with_single_blob_target() {
         path: None,
     };
     let review = store
-        .create_review("Blob review", "", &target, None)
+        .create_review("Blob review", "", &target, None, None)
         .unwrap();
     assert_eq!(review.target.head, blob);
     assert!(review.objects.contains(&blob));
@@ -137,7 +137,7 @@ fn create_with_source_ref() {
         path: None,
     };
     let review = store
-        .create_review("Branch review", "", &target, Some("feature-branch"))
+        .create_review("Branch review", "", &target, Some("feature-branch"), None)
         .unwrap();
     assert_eq!(review.source_ref, Some("feature-branch".to_string()));
 }
@@ -152,7 +152,9 @@ fn objects_tree_pins_target() {
         base: None,
         path: None,
     };
-    let review = store.create_review("Pin test", "", &target, None).unwrap();
+    let review = store
+        .create_review("Pin test", "", &target, None, None)
+        .unwrap();
 
     let ref_name = format!("refs/forge/review/{}", review.oid);
     let reference = repo.find_reference(&ref_name).unwrap();
@@ -176,7 +178,7 @@ fn get_review_roundtrip() {
         path: None,
     };
     let created = store
-        .create_review("Roundtrip", "body", &target, Some("main"))
+        .create_review("Roundtrip", "body", &target, Some("main"), None)
         .unwrap();
 
     let fetched = store.get_review(&created.oid).unwrap();
@@ -196,8 +198,12 @@ fn list_reviews() {
         base: None,
         path: None,
     };
-    store.create_review("Alpha", "", &target, None).unwrap();
-    store.create_review("Beta", "", &target, None).unwrap();
+    store
+        .create_review("Alpha", "", &target, None, None)
+        .unwrap();
+    store
+        .create_review("Beta", "", &target, None, None)
+        .unwrap();
 
     let reviews = store.list_reviews().unwrap();
     assert_eq!(reviews.len(), 2);
@@ -220,7 +226,7 @@ fn update_title_and_body() {
         path: None,
     };
     let created = store
-        .create_review("Old", "old body", &target, None)
+        .create_review("Old", "old body", &target, None, None)
         .unwrap();
 
     let updated = store
@@ -240,7 +246,7 @@ fn update_state_to_closed() {
         base: None,
         path: None,
     };
-    let created = store.create_review("PR", "", &target, None).unwrap();
+    let created = store.create_review("PR", "", &target, None, None).unwrap();
 
     let updated = store
         .update_review(&created.oid, None, None, Some(&ReviewState::Closed))
@@ -260,7 +266,7 @@ fn update_state_to_merged() {
         base: None,
         path: None,
     };
-    let created = store.create_review("PR", "", &target, None).unwrap();
+    let created = store.create_review("PR", "", &target, None, None).unwrap();
 
     let updated = store
         .update_review(&created.oid, None, None, Some(&ReviewState::Merged))
@@ -277,8 +283,12 @@ fn list_reviews_by_state() {
         base: None,
         path: None,
     };
-    let to_close = store.create_review("Close me", "", &target, None).unwrap();
-    store.create_review("Keep open", "", &target, None).unwrap();
+    let to_close = store
+        .create_review("Close me", "", &target, None, None)
+        .unwrap();
+    store
+        .create_review("Keep open", "", &target, None, None)
+        .unwrap();
     store
         .update_review(&to_close.oid, None, None, Some(&ReviewState::Closed))
         .unwrap();
@@ -307,7 +317,7 @@ fn refresh_target_updates_objects() {
         path: None,
     };
     let review = store
-        .create_review("Refresh", "", &target, Some("refs/heads/main"))
+        .create_review("Refresh", "", &target, Some("refs/heads/main"), None)
         .unwrap();
 
     let sig = git2::Signature::now("test", "test@test.com").unwrap();
@@ -338,7 +348,9 @@ fn refresh_noop_without_ref() {
         base: None,
         path: None,
     };
-    let review = store.create_review("No ref", "", &target, None).unwrap();
+    let review = store
+        .create_review("No ref", "", &target, None, None)
+        .unwrap();
 
     let refreshed = store.refresh_review_target(&review.oid).unwrap();
     assert_eq!(refreshed.target.head, review.target.head);
@@ -391,7 +403,9 @@ fn pin_entry_blob_references_actual_object() {
         base: None,
         path: None,
     };
-    let review = store.create_review("Blob pin", "", &target, None).unwrap();
+    let review = store
+        .create_review("Blob pin", "", &target, None, None)
+        .unwrap();
 
     let ref_name = format!("refs/forge/review/{}", review.oid);
     let reference = repo.find_reference(&ref_name).unwrap();
@@ -414,7 +428,7 @@ fn pin_entry_commit_references_actual_object() {
         path: None,
     };
     let review = store
-        .create_review("Commit pin", "", &target, None)
+        .create_review("Commit pin", "", &target, None, None)
         .unwrap();
 
     let ref_name = format!("refs/forge/review/{}", review.oid);
@@ -505,7 +519,7 @@ fn approve_review_records_all_objects() {
         path: None,
     };
     let review = store
-        .create_review("Approve me", "", &target, None)
+        .create_review("Approve me", "", &target, None, None)
         .unwrap();
     assert!(review.approvals.is_empty());
 
@@ -529,7 +543,7 @@ fn approve_review_object_single() {
         path: None,
     };
     let review = store
-        .create_review("Single obj", "", &target, None)
+        .create_review("Single obj", "", &target, None, None)
         .unwrap();
 
     let uuid = "00000000-0000-7000-8000-000000000002";
@@ -550,7 +564,9 @@ fn approve_review_object_not_in_objects_errors() {
         base: None,
         path: None,
     };
-    let review = store.create_review("Test", "", &target, None).unwrap();
+    let review = store
+        .create_review("Test", "", &target, None, None)
+        .unwrap();
 
     let fake_oid = make_blob(&repo, b"other");
     let uuid = "00000000-0000-7000-8000-000000000003";
@@ -567,7 +583,9 @@ fn revoke_approval_removes_entries() {
         base: None,
         path: None,
     };
-    let review = store.create_review("Revoke", "", &target, None).unwrap();
+    let review = store
+        .create_review("Revoke", "", &target, None, None)
+        .unwrap();
 
     let uuid = "00000000-0000-7000-8000-000000000004";
     store.approve_review(&review.oid, uuid).unwrap();
@@ -616,7 +634,7 @@ fn approved_oids_contains_blob_after_approve() {
         path: None,
     };
     let review = store
-        .create_review("Blob review", "", &target, None)
+        .create_review("Blob review", "", &target, None, None)
         .unwrap();
 
     let uuid = "00000000-0000-7000-8000-000000000010";
@@ -640,7 +658,7 @@ fn approved_oids_flattens_tree_to_blobs() {
         path: None,
     };
     let review = store
-        .create_review("Tree review", "", &target, None)
+        .create_review("Tree review", "", &target, None, None)
         .unwrap();
 
     let uuid = "00000000-0000-7000-8000-000000000011";
@@ -668,7 +686,7 @@ fn approved_oids_flattens_commit_to_blobs() {
         path: None,
     };
     let review = store
-        .create_review("Commit review", "", &target, None)
+        .create_review("Commit review", "", &target, None, None)
         .unwrap();
 
     let uuid = "00000000-0000-7000-8000-000000000012";
@@ -696,7 +714,7 @@ fn approved_oids_empty_after_revoke() {
         path: None,
     };
     let review = store
-        .create_review("Revoke index", "", &target, None)
+        .create_review("Revoke index", "", &target, None, None)
         .unwrap();
 
     let uuid = "00000000-0000-7000-8000-000000000013";
