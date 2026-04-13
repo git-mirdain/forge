@@ -30,8 +30,14 @@ use git_forge::comment::{
 use git_forge::refs::walk_tree;
 
 enum PendingComment {
-    New { blob_oid: String, line: u32 },
-    Reply { comment_oid: String },
+    New {
+        blob_oid: String,
+        start_line: u32,
+        end_line: u32,
+    },
+    Reply {
+        comment_oid: String,
+    },
 }
 
 const DRAFTS_DIR: &str = ".git/forge/comments/drafts";
@@ -319,11 +325,15 @@ impl ForgeLanguageServer {
         let Some(repo) = self.open_repo() else { return };
 
         let result: std::result::Result<(), String> = match pending {
-            PendingComment::New { blob_oid, line } => {
+            PendingComment::New {
+                blob_oid,
+                start_line,
+                end_line,
+            } => {
                 let anchor = Anchor {
                     oid: blob_oid,
-                    start_line: Some(line + 1),
-                    end_line: Some(line + 1),
+                    start_line: Some(start_line + 1),
+                    end_line: Some(end_line + 1),
                 };
                 create_thread(&repo, &body, Some(&anchor), None, None)
                     .map(|_| ())
@@ -662,6 +672,7 @@ impl LanguageServer for ForgeLanguageServer {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let line = params.range.start.line;
+        let end_line = params.range.end.line;
         let uri = &params.text_document.uri;
 
         let Some(repo) = self.open_repo() else {
@@ -699,6 +710,7 @@ impl LanguageServer for ForgeLanguageServer {
                 arguments: Some(vec![
                     Value::String(uri.to_string()),
                     Value::from(line),
+                    Value::from(end_line),
                     Value::String(blob_oid.clone()),
                 ]),
             }),
@@ -761,10 +773,13 @@ impl LanguageServer for ForgeLanguageServer {
                 let Some(Value::String(uri_str)) = args.first() else {
                     return Ok(None);
                 };
-                let Some(line) = args.get(1).and_then(|v: &Value| v.as_u64()) else {
+                let Some(start) = args.get(1).and_then(|v: &Value| v.as_u64()) else {
                     return Ok(None);
                 };
-                let Some(Value::String(blob_oid)) = args.get(2) else {
+                let Some(end) = args.get(2).and_then(|v: &Value| v.as_u64()) else {
+                    return Ok(None);
+                };
+                let Some(Value::String(blob_oid)) = args.get(3) else {
                     return Ok(None);
                 };
 
@@ -778,19 +793,22 @@ impl LanguageServer for ForgeLanguageServer {
                 let Some(tmp) = self.draft_path() else {
                     return Ok(None);
                 };
-                let header = format!(
-                    "<!-- forge: new comment on {}:{} -->\n\n",
-                    path_str,
-                    line + 1
-                );
+                let range_str = if start == end {
+                    format!("{}", start + 1)
+                } else {
+                    format!("{}-{}", start + 1, end + 1)
+                };
+                let header = format!("<!-- forge: new comment on {path_str}:{range_str} -->\n\n");
 
-                let line = u32::try_from(line).unwrap_or(0);
+                let start_line = u32::try_from(start).unwrap_or(0);
+                let end_line = u32::try_from(end).unwrap_or(start_line);
                 self.open_draft(
                     &tmp,
                     &header,
                     PendingComment::New {
                         blob_oid: blob_oid.clone(),
-                        line,
+                        start_line,
+                        end_line,
                     },
                 )
                 .await;
