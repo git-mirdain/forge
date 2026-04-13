@@ -17,9 +17,9 @@ use tower_lsp::lsp_types::{
     ExecuteCommandParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, InitializeResult, InitializedParams, MarkupContent, MarkupKind, MessageType,
     NumberOrString, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range, ResourceOp,
-    SaveOptions, ServerCapabilities, ShowDocumentParams, TextDocumentEdit,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
+    SaveOptions, ServerCapabilities, TextDocumentEdit, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+    WorkDoneProgressOptions, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -375,9 +375,8 @@ impl ForgeLanguageServer {
             return;
         };
 
-        // Collect into BTreeMap for deterministic file ordering.
         let blob_map: BTreeMap<String, Vec<String>> = head_blob_map(&repo).into_iter().collect();
-        let mut opened = 0u32;
+        let mut edits: Vec<DocumentChangeOperation> = Vec::new();
         for (blob_oid, paths) in &blob_map {
             let tcs = comments_for_blob(&repo, blob_oid);
             let has_unresolved = tcs.iter().any(|tc| !tc.comment.resolved);
@@ -389,34 +388,33 @@ impl ForgeLanguageServer {
                 let Ok(uri) = Url::from_file_path(&abs) else {
                     continue;
                 };
-                match self
-                    .client
-                    .show_document(ShowDocumentParams {
-                        uri,
-                        external: None,
-                        take_focus: Some(opened == 0),
-                        selection: None,
-                    })
-                    .await
-                {
-                    Ok(_) => opened += 1,
-                    Err(e) => {
-                        self.client
-                            .log_message(
-                                MessageType::WARNING,
-                                format!("showDocument failed for {path}: {e}"),
-                            )
-                            .await;
-                    }
-                }
+                edits.push(DocumentChangeOperation::Edit(TextDocumentEdit {
+                    text_document: OptionalVersionedTextDocumentIdentifier { uri, version: None },
+                    edits: vec![OneOf::Left(TextEdit {
+                        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+                        new_text: String::new(),
+                    })],
+                }));
             }
         }
 
-        if opened == 0 {
+        if edits.is_empty() {
             self.client
-                .log_message(MessageType::INFO, "No files with unresolved comments")
+                .show_message(
+                    MessageType::INFO,
+                    "forge: no files with unresolved comments",
+                )
                 .await;
+            return;
         }
+
+        let _ = self
+            .client
+            .apply_edit(WorkspaceEdit {
+                document_changes: Some(DocumentChanges::Operations(edits)),
+                ..Default::default()
+            })
+            .await;
     }
 
     async fn open_draft(&self, path: &PathBuf, header: &str, pending: PendingComment) {
