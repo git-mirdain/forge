@@ -10,6 +10,7 @@ use std::time::Duration;
 use anyhow::Result;
 use forge_github::GitHubAdapter;
 use forge_github::config::{SyncScope, discover_github_configs};
+use git_forge::Store;
 use git_forge::comment::rebuild_comments_index;
 use git_forge::sync::RemoteSync;
 use git2::Repository;
@@ -98,8 +99,15 @@ async fn run_loop(repo: &Repository, config: &ServerConfig) -> Result<()> {
             }
         }
 
+        let store = Store::new(repo);
+        if let Err(e) = store.reindex_issues() {
+            eprintln!("forge-server: issue reindex failed: {e:#}");
+        }
+        if let Err(e) = store.reindex_reviews() {
+            eprintln!("forge-server: review reindex failed: {e:#}");
+        }
         if let Err(e) = rebuild_comments_index(repo) {
-            eprintln!("forge-server: index rebuild failed: {e:#}");
+            eprintln!("forge-server: comment reindex failed: {e:#}");
         }
 
         if !config.no_sync_refs {
