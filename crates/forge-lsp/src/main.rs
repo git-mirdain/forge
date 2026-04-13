@@ -1,5 +1,5 @@
-//! Forge LSP server — surfaces inline comments as diagnostics, inlay hints,
-//! and code actions.
+//! Forge LSP server — surfaces inline comments as diagnostics, hover, and
+//! code actions.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -14,12 +14,12 @@ use tower_lsp::lsp_types::{
     CodeActionResponse, Command, CreateFile, CreateFileOptions, Diagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, DocumentChangeOperation, DocumentChanges, ExecuteCommandOptions,
-    ExecuteCommandParams, InitializeParams, InitializeResult, InitializedParams, InlayHint,
-    InlayHintLabel, InlayHintParams, MessageType, NumberOrString, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, Range, ResourceOp, SaveOptions,
-    ServerCapabilities, ShowDocumentParams, TextDocumentEdit, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
-    WorkDoneProgressOptions, WorkspaceEdit,
+    ExecuteCommandParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, MarkupContent, MarkupKind, MessageType,
+    NumberOrString, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range, ResourceOp,
+    SaveOptions, ServerCapabilities, ShowDocumentParams, TextDocumentEdit,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -181,14 +181,6 @@ impl ForgeLanguageServer {
             .map(|oid| oid.to_string())
     }
 
-    fn hints_for_blob(repo: &Repository, blob_oid: &str) -> Vec<InlayHint> {
-        let tcs = comments_for_blob(repo, blob_oid);
-        tcs.iter()
-            .filter(|tc| !tc.comment.resolved)
-            .map(|tc| hint_for_comment(&tc.comment))
-            .collect()
-    }
-
     fn store_content(&self, uri: Url, content: String) {
         self.file_contents
             .write()
@@ -209,10 +201,6 @@ impl ForgeLanguageServer {
             .expect("lock poisoned")
             .get(uri)
             .cloned()
-    }
-
-    async fn refresh(&self) {
-        let _ = self.client.inlay_hint_refresh().await;
     }
 
     fn draft_path(&self) -> Option<PathBuf> {
@@ -366,7 +354,6 @@ impl ForgeLanguageServer {
             }
         }
 
-        self.refresh().await;
         self.publish_all_diagnostics().await;
     }
 
@@ -467,27 +454,89 @@ impl ForgeLanguageServer {
     }
 }
 
-fn hint_for_comment(comment: &Comment) -> InlayHint {
-    let line = comment
-        .anchor
-        .as_ref()
-        .and_then(|a| a.start_line)
-        .map_or(0, |l| l.saturating_sub(1));
-    let first_line = comment.body.lines().next().unwrap_or(&comment.body);
-    let label = format!("▸ {}: {}", comment.author_name, first_line);
-    InlayHint {
-        position: Position {
-            line,
-            character: u32::MAX,
-        },
-        label: InlayHintLabel::String(label),
-        kind: None,
-        text_edits: None,
-        tooltip: None,
-        padding_left: Some(true),
-        padding_right: None,
-        data: Some(Value::String(comment.oid.clone())),
+// ── hover ───────────────────────────────────────────────────────────────────
+
+/// Render a full comment thread as Markdown for the hover popup.
+fn render_thread_markdown(thread_id: &str, comments: &[Comment]) -> String {
+    use std::fmt::Write;
+
+    use chrono::{TimeZone, Utc};
+
+    let mut md = String::new();
+    let resolved = comments.iter().any(|c| c.resolved);
+
+    if resolved {
+        md.push_str("**Thread** (resolved)\n\n");
+    } else {
+        md.push_str("**Thread**\n\n");
     }
+
+    let replaced: HashSet<&str> = comments
+        .iter()
+        .filter_map(|c| c.replaces.as_deref())
+        .collect();
+
+    let mut first = true;
+    for c in comments {
+        if replaced.contains(c.oid.as_str()) {
+            continue;
+        }
+        if !first {
+            md.push_str("\n---\n\n");
+        }
+        first = false;
+
+        let time_str = Utc
+            .timestamp_opt(c.timestamp, 0)
+            .single()
+            .map_or_else(String::new, |dt| {
+                dt.format(" · %Y-%m-%d %H:%M UTC").to_string()
+            });
+        let _ = write!(md, "**{}**{time_str}\n\n", c.author_name);
+
+        md.push_str(&c.body);
+        md.push('\n');
+
+        if c.resolved {
+            md.push_str("\n*Resolved*\n");
+        }
+    }
+
+    let short_id = &thread_id[..thread_id.len().min(8)];
+    let _ = write!(md, "\n---\n`{short_id}…`");
+
+    md
+}
+
+/// Collect threads anchored to `blob_oid` that overlap `line` (0-based).
+fn threads_at_line(repo: &Repository, blob_oid: &str, line: u32) -> Vec<(String, Vec<Comment>)> {
+    let Ok(thread_ids) = find_threads_by_object(repo, blob_oid) else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    for tid in &thread_ids {
+        let Ok(comments) = list_thread_comments(repo, tid) else {
+            continue;
+        };
+        // Check if any root comment in this thread anchors to the hover line.
+        let overlaps = comments.iter().any(|c| {
+            let start = c
+                .anchor
+                .as_ref()
+                .and_then(|a| a.start_line)
+                .map_or(0, |l| l.saturating_sub(1));
+            let end = c
+                .anchor
+                .as_ref()
+                .and_then(|a| a.end_line)
+                .map_or(start, |l| l.saturating_sub(1));
+            line >= start && line <= end
+        });
+        if overlaps {
+            result.push((tid.clone(), comments));
+        }
+    }
+    result
 }
 
 #[tower_lsp::async_trait]
@@ -511,7 +560,7 @@ impl LanguageServer for ForgeLanguageServer {
                         ..Default::default()
                     },
                 )),
-                inlay_hint_provider: Some(OneOf::Left(true)),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec![
@@ -542,14 +591,13 @@ impl LanguageServer for ForgeLanguageServer {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         self.store_content(params.text_document.uri, params.text_document.text);
-        self.refresh().await;
+
         self.publish_file_diagnostics(&uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.last() {
             self.store_content(params.text_document.uri, change.text.clone());
-            self.refresh().await;
         }
     }
 
@@ -567,7 +615,7 @@ impl LanguageServer for ForgeLanguageServer {
         if let Some(text) = params.text {
             let uri = params.text_document.uri.clone();
             self.store_content(params.text_document.uri, text);
-            self.refresh().await;
+
             self.publish_file_diagnostics(&uri).await;
         }
     }
@@ -576,17 +624,40 @@ impl LanguageServer for ForgeLanguageServer {
         self.remove_content(&params.text_document.uri);
     }
 
-    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        let hints = self
-            .open_repo()
-            .and_then(|repo| {
-                let content = self.get_content(&params.text_document.uri)?;
-                let blob_oid = Self::hash_content(&repo, content.as_bytes())?;
-                Some(Self::hints_for_blob(&repo, &blob_oid))
-            })
-            .unwrap_or_default();
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let line = params.text_document_position_params.position.line;
 
-        Ok(Some(hints))
+        let Some(repo) = self.open_repo() else {
+            return Ok(None);
+        };
+        let Some(content) = self.get_content(uri) else {
+            return Ok(None);
+        };
+        let Some(blob_oid) = Self::hash_content(&repo, content.as_bytes()) else {
+            return Ok(None);
+        };
+
+        let threads = threads_at_line(&repo, &blob_oid, line);
+        if threads.is_empty() {
+            return Ok(None);
+        }
+
+        let mut md = String::new();
+        for (i, (tid, comments)) in threads.iter().enumerate() {
+            if i > 0 {
+                md.push_str("\n\n---\n\n");
+            }
+            md.push_str(&render_thread_markdown(tid, comments));
+        }
+
+        Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: md,
+            }),
+            range: None,
+        }))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
@@ -757,7 +828,7 @@ impl LanguageServer for ForgeLanguageServer {
                     return Ok(None);
                 };
                 let _ = resolve_thread(&repo, thread_id, comment_oid, None, None);
-                self.refresh().await;
+
                 self.publish_all_diagnostics().await;
             }
             _ => {}
@@ -772,4 +843,193 @@ async fn main() {
     let stdout = tokio::io::stdout();
     let (service, socket) = LspService::new(ForgeLanguageServer::new);
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git_forge::comment::{Anchor, Comment};
+
+    fn make_comment(
+        oid: &str,
+        author: &str,
+        body: &str,
+        timestamp: i64,
+        anchor: Option<Anchor>,
+    ) -> Comment {
+        Comment {
+            oid: oid.to_string(),
+            body: body.to_string(),
+            author_name: author.to_string(),
+            author_email: format!("{author}@example.com"),
+            timestamp,
+            anchor,
+            resolved: false,
+            replaces: None,
+            reply_to: None,
+            tree: "a".repeat(40),
+            context_lines: None,
+            thread_id: Some("01234567-0123-0123-0123-0123456789ab".to_string()),
+        }
+    }
+
+    fn anchor(start: u32, end: u32) -> Anchor {
+        Anchor {
+            oid: "b".repeat(40),
+            start_line: Some(start),
+            end_line: Some(end),
+        }
+    }
+
+    // ── render_thread_markdown ───────────────────────────────────────────
+
+    #[test]
+    fn hover_single_comment() {
+        let c = make_comment(
+            "a".repeat(40).as_str(),
+            "Alice",
+            "Looks good",
+            1_700_000_000,
+            None,
+        );
+        let md = render_thread_markdown("01234567-abcd", &[c]);
+        assert!(md.contains("**Thread**\n"));
+        assert!(md.contains("**Alice**"));
+        assert!(md.contains("Looks good"));
+        assert!(!md.contains("resolved"));
+    }
+
+    #[test]
+    fn hover_resolved_thread() {
+        let c = make_comment(
+            "a".repeat(40).as_str(),
+            "Alice",
+            "Fix this",
+            1_700_000_000,
+            None,
+        );
+        let mut r = make_comment("b".repeat(40).as_str(), "Bob", "Done", 1_700_001_000, None);
+        r.resolved = true;
+        r.reply_to = Some(c.oid.clone());
+
+        let md = render_thread_markdown("01234567-abcd", &[c, r]);
+        assert!(md.contains("(resolved)"));
+        assert!(md.contains("**Alice**"));
+        assert!(md.contains("**Bob**"));
+        assert!(md.contains("*Resolved*"));
+    }
+
+    #[test]
+    fn hover_skips_replaced_comments() {
+        let original = make_comment(
+            "a".repeat(40).as_str(),
+            "Alice",
+            "Old text",
+            1_700_000_000,
+            None,
+        );
+        let mut edited = make_comment(
+            "c".repeat(40).as_str(),
+            "Alice",
+            "New text",
+            1_700_002_000,
+            None,
+        );
+        edited.replaces = Some(original.oid.clone());
+
+        let md = render_thread_markdown("01234567-abcd", &[original, edited]);
+        assert!(!md.contains("Old text"));
+        assert!(md.contains("New text"));
+    }
+
+    #[test]
+    fn hover_multiple_replies_separated() {
+        let c1 = make_comment(
+            "a".repeat(40).as_str(),
+            "Alice",
+            "Question",
+            1_700_000_000,
+            None,
+        );
+        let mut c2 = make_comment(
+            "b".repeat(40).as_str(),
+            "Bob",
+            "Answer",
+            1_700_001_000,
+            None,
+        );
+        c2.reply_to = Some(c1.oid.clone());
+
+        let md = render_thread_markdown("01234567-abcd", &[c1, c2]);
+        assert!(md.contains("---"));
+        assert!(md.contains("Question"));
+        assert!(md.contains("Answer"));
+    }
+
+    // ── diagnostic_for_comment ──────────────────────────────────────────
+
+    #[test]
+    fn diagnostic_unresolved_is_information() {
+        let c = make_comment(
+            "a".repeat(40).as_str(),
+            "Alice",
+            "Check this",
+            0,
+            Some(anchor(10, 12)),
+        );
+        let tc = ThreadComment {
+            thread_id: "tid-1".to_string(),
+            comment: c,
+        };
+        let d = diagnostic_for_comment(&tc);
+        assert_eq!(d.severity, Some(DiagnosticSeverity::INFORMATION));
+        assert_eq!(d.range.start.line, 9); // 1-based → 0-based
+        assert_eq!(d.range.end.line, 11);
+        assert_eq!(d.source.as_deref(), Some("forge"));
+        assert!(d.message.contains("Alice"));
+    }
+
+    #[test]
+    fn diagnostic_resolved_is_hint() {
+        let mut c = make_comment(
+            "a".repeat(40).as_str(),
+            "Alice",
+            "Done",
+            0,
+            Some(anchor(5, 5)),
+        );
+        c.resolved = true;
+        let tc = ThreadComment {
+            thread_id: "tid-2".to_string(),
+            comment: c,
+        };
+        let d = diagnostic_for_comment(&tc);
+        assert_eq!(d.severity, Some(DiagnosticSeverity::HINT));
+    }
+
+    #[test]
+    fn diagnostic_no_anchor_defaults_to_line_zero() {
+        let c = make_comment("a".repeat(40).as_str(), "Alice", "General note", 0, None);
+        let tc = ThreadComment {
+            thread_id: "tid-3".to_string(),
+            comment: c,
+        };
+        let d = diagnostic_for_comment(&tc);
+        assert_eq!(d.range.start.line, 0);
+        assert_eq!(d.range.end.line, 0);
+    }
+
+    #[test]
+    fn diagnostic_thread_id_in_code() {
+        let c = make_comment("a".repeat(40).as_str(), "Alice", "Note", 0, None);
+        let tc = ThreadComment {
+            thread_id: "my-thread-id".to_string(),
+            comment: c,
+        };
+        let d = diagnostic_for_comment(&tc);
+        assert_eq!(
+            d.code,
+            Some(NumberOrString::String("my-thread-id".to_string()))
+        );
+    }
 }
