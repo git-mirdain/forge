@@ -438,6 +438,7 @@ pub fn create_thread(
     let tree = build_comment_tree(repo, body, anchor, context_lines)?;
     let entry = append_with_sig(repo, &ref_name, &message, tree, None, author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
+    update_comment_indexes(repo, anchor_oid_str, &thread_id, &entry.commit.to_string())?;
     Ok((thread_id, comment))
 }
 
@@ -479,6 +480,12 @@ pub fn reply_to_thread(
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
     let entry = append_with_sig(repo, &ref_name, &message, tree, Some(parent), author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
+    update_comment_indexes(
+        repo,
+        &effective_anchor_oid,
+        thread_id,
+        &entry.commit.to_string(),
+    )?;
     Ok(comment)
 }
 
@@ -514,6 +521,8 @@ pub fn resolve_thread(
     let parent = resolve_thread_oid(repo, &ref_name, reply_to_oid)?;
     let entry = append_with_sig(repo, &ref_name, &msg, tree, Some(parent), author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
+    let anchor_oid_str = inherited_anchor.as_ref().map_or("", |a| a.oid.as_str());
+    update_comment_indexes(repo, anchor_oid_str, thread_id, &entry.commit.to_string())?;
     Ok(comment)
 }
 
@@ -570,6 +579,12 @@ pub fn edit_in_thread(
     )?;
     let entry = append_with_sig(repo, &ref_name, &message, tree, Some(parent), author)?;
     let comment = comment_from_chain_entry(repo, &entry)?;
+    update_comment_indexes(
+        repo,
+        &effective_anchor.oid,
+        thread_id,
+        &entry.commit.to_string(),
+    )?;
     Ok(comment)
 }
 
@@ -700,6 +715,159 @@ pub fn find_threads_by_object(repo: &Repository, oid: &str) -> Result<Vec<String
 // ---------------------------------------------------------------------------
 // Index
 // ---------------------------------------------------------------------------
+
+/// Upsert one entry into `COMMENTS_BY_COMMENT_INDEX` (comment OID → thread UUID).
+///
+/// Uses the same fanout structure as `rebuild_comments_index`:
+/// `{comment_oid[..2]}/{comment_oid[2..]}` → `"{thread_id}\n"`.
+fn fanout_upsert_comment_oid(repo: &Repository, comment_oid: &str, thread_id: &str) -> Result<()> {
+    if comment_oid.len() < 3 {
+        return Ok(());
+    }
+    let (prefix, rest) = comment_oid.split_at(2);
+    let blob_content = format!("{thread_id}\n");
+    let blob_oid = repo.blob(blob_content.as_bytes())?;
+
+    let parent = repo
+        .find_reference(COMMENTS_BY_COMMENT_INDEX)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+
+    let existing_root = parent.as_ref().and_then(|p| p.tree().ok());
+
+    // Build updated prefix subtree.
+    let mut dir_builder = if let Some(ref root) = existing_root {
+        if let Ok(entry) = root.get_path(std::path::Path::new(prefix)) {
+            if let Ok(subtree) = repo.find_tree(entry.id()) {
+                repo.treebuilder(Some(&subtree))?
+            } else {
+                repo.treebuilder(None)?
+            }
+        } else {
+            repo.treebuilder(None)?
+        }
+    } else {
+        repo.treebuilder(None)?
+    };
+    dir_builder.insert(rest, blob_oid, 0o100_644)?;
+    let dir_oid = dir_builder.write()?;
+
+    // Build updated root tree.
+    let mut root_builder = if let Some(ref root) = existing_root {
+        repo.treebuilder(Some(root))?
+    } else {
+        repo.treebuilder(None)?
+    };
+    root_builder.insert(prefix, dir_oid, 0o040_000)?;
+    let root_oid = root_builder.write()?;
+    let root_tree = repo.find_tree(root_oid)?;
+
+    let sig = repo.signature()?;
+    let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+    repo.commit(
+        Some(COMMENTS_BY_COMMENT_INDEX),
+        &sig,
+        &sig,
+        "forge: update comments-by-comment index",
+        &root_tree,
+        &parents,
+    )?;
+    Ok(())
+}
+
+/// Append `thread_id` to the set stored in `COMMENTS_INDEX` for `anchor_oid`.
+///
+/// Fanout: `{anchor_oid[..2]}/{anchor_oid[2..]}` → newline-separated thread UUIDs.
+/// No-op if `anchor_oid` is empty.
+fn fanout_append_thread_to_anchor(
+    repo: &Repository,
+    anchor_oid: &str,
+    thread_id: &str,
+) -> Result<()> {
+    if anchor_oid.len() < 3 {
+        return Ok(());
+    }
+    let (prefix, rest) = anchor_oid.split_at(2);
+
+    let parent = repo
+        .find_reference(COMMENTS_INDEX)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok());
+
+    let existing_root = parent.as_ref().and_then(|p| p.tree().ok());
+
+    // Read existing thread list for this anchor (if any).
+    let mut threads: BTreeSet<String> = BTreeSet::new();
+    if let Some(ref root) = existing_root
+        && let Ok(entry) = root.get_path(std::path::Path::new(&format!("{prefix}/{rest}")))
+        && let Ok(blob) = repo.find_blob(entry.id())
+    {
+        for line in String::from_utf8_lossy(blob.content()).lines() {
+            if !line.is_empty() {
+                threads.insert(line.to_string());
+            }
+        }
+    }
+    threads.insert(thread_id.to_string());
+
+    let blob_content: String = threads.iter().fold(String::new(), |mut acc, t| {
+        acc.push_str(t);
+        acc.push('\n');
+        acc
+    });
+    let blob_oid = repo.blob(blob_content.as_bytes())?;
+
+    // Build updated prefix subtree.
+    let mut dir_builder = if let Some(ref root) = existing_root {
+        if let Ok(entry) = root.get_path(std::path::Path::new(prefix)) {
+            if let Ok(subtree) = repo.find_tree(entry.id()) {
+                repo.treebuilder(Some(&subtree))?
+            } else {
+                repo.treebuilder(None)?
+            }
+        } else {
+            repo.treebuilder(None)?
+        }
+    } else {
+        repo.treebuilder(None)?
+    };
+    dir_builder.insert(rest, blob_oid, 0o100_644)?;
+    let dir_oid = dir_builder.write()?;
+
+    // Build updated root tree.
+    let mut root_builder = if let Some(ref root) = existing_root {
+        repo.treebuilder(Some(root))?
+    } else {
+        repo.treebuilder(None)?
+    };
+    root_builder.insert(prefix, dir_oid, 0o040_000)?;
+    let root_oid = root_builder.write()?;
+    let root_tree = repo.find_tree(root_oid)?;
+
+    let sig = repo.signature()?;
+    let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
+    repo.commit(
+        Some(COMMENTS_INDEX),
+        &sig,
+        &sig,
+        "forge: update comments-by-object index",
+        &root_tree,
+        &parents,
+    )?;
+    Ok(())
+}
+
+/// Update both comment indexes incrementally after a write.
+fn update_comment_indexes(
+    repo: &Repository,
+    anchor_oid: &str,
+    thread_id: &str,
+    comment_oid: &str,
+) -> Result<()> {
+    fanout_upsert_comment_oid(repo, comment_oid, thread_id)?;
+    fanout_append_thread_to_anchor(repo, anchor_oid, thread_id)?;
+    Ok(())
+}
 
 /// Rebuild the `refs/forge/index/comments-by-object` index from scratch.
 ///
