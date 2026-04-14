@@ -104,6 +104,22 @@ fn comments_for_blob(repo: &Repository, blob_oid: &str) -> Vec<ThreadComment> {
         .collect()
 }
 
+/// Return `true` if the blob has at least one thread with no resolve event.
+fn blob_has_unresolved_threads(repo: &Repository, blob_oid: &str) -> bool {
+    use std::collections::HashMap;
+    let tcs = comments_for_blob(repo, blob_oid);
+    let mut by_thread: HashMap<&str, Vec<&git_forge::comment::Comment>> = HashMap::new();
+    for tc in &tcs {
+        by_thread
+            .entry(tc.thread_id.as_str())
+            .or_default()
+            .push(&tc.comment);
+    }
+    by_thread
+        .values()
+        .any(|comments| !comments.iter().any(|c| c.resolved))
+}
+
 // ── inlay hints ──────────────────────────────────────────────────────────────
 
 fn inlay_hints_for_blob(repo: &Repository, blob_oid: &str) -> Vec<InlayHint> {
@@ -306,10 +322,7 @@ impl ForgeLanguageServer {
         let blob_map = head_blob_map(&repo);
         let mut paths: Vec<String> = Vec::new();
         for (blob_oid, blob_paths) in &blob_map {
-            let has_unresolved = comments_for_blob(&repo, blob_oid)
-                .iter()
-                .any(|tc| !tc.comment.resolved);
-            if has_unresolved {
+            if blob_has_unresolved_threads(&repo, blob_oid) {
                 paths.extend(blob_paths.iter().cloned());
             }
         }
@@ -629,11 +642,9 @@ impl LanguageServer for ForgeLanguageServer {
 
         let tcs = comments_for_blob(&repo, &blob_oid);
 
-        let repo_has_unresolved = head_blob_map(&repo).into_keys().any(|oid| {
-            comments_for_blob(&repo, &oid)
-                .iter()
-                .any(|tc| !tc.comment.resolved)
-        });
+        let repo_has_unresolved = head_blob_map(&repo)
+            .into_keys()
+            .any(|oid| blob_has_unresolved_threads(&repo, &oid));
         if repo_has_unresolved {
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "Open all files with unresolved comments".to_string(),
