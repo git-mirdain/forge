@@ -2616,15 +2616,14 @@ fn print_comment_node(c: &Comment, depth: usize, color: bool) {
     }
 
     if let Some(ctx) = c.context_lines.as_deref() {
-        if color {
-            let dim = "\x1b[2m";
-            let reset = "\x1b[0m";
-            for line in ctx.lines() {
-                println!("{indent}  {dim}│{reset} {line}");
-            }
-        } else {
-            for line in ctx.lines() {
-                println!("{indent}  │ {line}");
+        let fenced = format!("```\n{ctx}\n```");
+        let rendered = render_markdown_block(&fenced);
+        for line in rendered.lines() {
+            let trimmed = line.trim_end();
+            if trimmed.is_empty() {
+                println!();
+            } else {
+                println!("{indent}  {trimmed}");
             }
         }
         println!();
