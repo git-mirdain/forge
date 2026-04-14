@@ -285,6 +285,7 @@ impl ForgeLanguageServer {
         match result {
             Ok(()) => {
                 let _ = std::fs::remove_file(path);
+                let _ = self.client.inlay_hint_refresh().await;
             }
             Err(msg) => {
                 self.client
@@ -789,6 +790,7 @@ impl LanguageServer for ForgeLanguageServer {
                     return Ok(None);
                 };
                 let _ = resolve_thread(&repo, thread_id, comment_oid, None, None);
+                let _ = self.client.inlay_hint_refresh().await;
             }
             _ => {}
         }
