@@ -661,9 +661,15 @@ impl LanguageServer for ForgeLanguageServer {
             ..Default::default()
         }));
 
+        let resolved_threads: HashSet<&str> = tcs
+            .iter()
+            .filter(|tc| tc.comment.resolved)
+            .map(|tc| tc.thread_id.as_str())
+            .collect();
+
         for tc in &tcs {
             let c = &tc.comment;
-            if c.resolved {
+            if resolved_threads.contains(tc.thread_id.as_str()) {
                 continue;
             }
             let comment_line = c
