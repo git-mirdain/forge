@@ -1,4 +1,4 @@
-//! Forge LSP server — surfaces inline comments as diagnostics, hover, and
+//! Forge LSP server — surfaces inline comments as inlay hints, hover, and
 //! code actions.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -11,12 +11,12 @@ use serde_json::Value;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionOrCommand, CodeActionParams, CodeActionProviderCapability,
-    CodeActionResponse, Command, CreateFile, CreateFileOptions, Diagnostic, DiagnosticSeverity,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentChangeOperation, DocumentChanges, ExecuteCommandOptions,
-    ExecuteCommandParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, MarkupContent, MarkupKind, MessageType,
-    NumberOrString, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range, ResourceOp,
+    CodeActionResponse, Command, CreateFile, CreateFileOptions, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentChangeOperation, DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, Hover,
+    HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, InlayHint, InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind,
+    MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range, ResourceOp,
     SaveOptions, ServerCapabilities, TextDocumentEdit, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
     WorkDoneProgressOptions, WorkspaceEdit,
@@ -41,20 +41,18 @@ enum PendingComment {
 }
 
 const DRAFTS_DIR: &str = ".git/forge/comments/drafts";
-const DIAGNOSTIC_SOURCE: &str = "forge";
 
 struct ForgeLanguageServer {
     client: Client,
     repo_path: RwLock<Option<PathBuf>>,
     file_contents: RwLock<HashMap<Url, String>>,
     pending: Mutex<HashMap<PathBuf, PendingComment>>,
-    published_uris: Mutex<HashSet<Url>>,
     draft_counter: AtomicU64,
 }
 
 // ── comment collection ───────────────────────────────────────────────────────
 
-/// A comment with its owning thread ID, for diagnostics and code actions.
+/// A comment with its owning thread ID.
 struct ThreadComment {
     thread_id: String,
     comment: Comment,
@@ -106,45 +104,53 @@ fn comments_for_blob(repo: &Repository, blob_oid: &str) -> Vec<ThreadComment> {
         .collect()
 }
 
-// ── diagnostics ──────────────────────────────────────────────────────────────
+// ── inlay hints ──────────────────────────────────────────────────────────────
 
-fn diagnostic_for_comment(tc: &ThreadComment) -> Diagnostic {
-    let c = &tc.comment;
-    let line = c
-        .anchor
-        .as_ref()
-        .and_then(|a| a.start_line)
-        .map_or(0, |l| l.saturating_sub(1));
-    let end_line = c
-        .anchor
-        .as_ref()
-        .and_then(|a| a.end_line)
-        .map_or(line, |l| l.saturating_sub(1));
-
-    let first_line = c.body.lines().next().unwrap_or(&c.body);
-    let message = format!("{}: {first_line}", c.author_name);
-
-    let severity = if c.resolved {
-        DiagnosticSeverity::HINT
-    } else {
-        DiagnosticSeverity::INFORMATION
+fn inlay_hints_for_blob(repo: &Repository, blob_oid: &str) -> Vec<InlayHint> {
+    let Ok(thread_ids) = find_threads_by_object(repo, blob_oid) else {
+        return Vec::new();
     };
 
-    Diagnostic {
-        range: Range {
-            start: Position { line, character: 0 },
-            end: Position {
-                line: end_line,
-                character: u32::MAX,
-            },
-        },
-        severity: Some(severity),
-        source: Some(DIAGNOSTIC_SOURCE.to_string()),
-        message,
-        code: Some(NumberOrString::String(tc.thread_id.clone())),
-        data: Some(Value::String(c.oid.clone())),
-        ..Default::default()
+    let mut unresolved_by_line: BTreeMap<u32, u32> = BTreeMap::new();
+    for tid in &thread_ids {
+        let Ok(comments) = list_thread_comments(repo, tid) else {
+            continue;
+        };
+        let resolved = comments.iter().any(|c| c.resolved);
+        if resolved {
+            continue;
+        }
+        let line = comments
+            .first()
+            .and_then(|c| c.anchor.as_ref())
+            .and_then(|a| a.start_line)
+            .map_or(0, |l| l.saturating_sub(1));
+        *unresolved_by_line.entry(line).or_default() += 1;
     }
+
+    unresolved_by_line
+        .into_iter()
+        .map(|(line, count)| {
+            let label = if count == 1 {
+                " ◆ 1 unresolved comment".to_string()
+            } else {
+                format!(" ◆ {count} unresolved comments")
+            };
+            InlayHint {
+                position: Position {
+                    line,
+                    character: u32::MAX,
+                },
+                label: InlayHintLabel::String(label),
+                kind: None,
+                text_edits: None,
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: None,
+            }
+        })
+        .collect()
 }
 
 // ── server impl ──────────────────────────────────────────────────────────────
@@ -156,7 +162,6 @@ impl ForgeLanguageServer {
             repo_path: RwLock::new(None),
             file_contents: RwLock::new(HashMap::new()),
             pending: Mutex::new(HashMap::new()),
-            published_uris: Mutex::new(HashSet::new()),
             draft_counter: AtomicU64::new(0),
         }
     }
@@ -175,10 +180,6 @@ impl ForgeLanguageServer {
             repo.workdir()
                 .map_or_else(|| repo.path().into(), Into::into),
         )
-    }
-
-    fn workdir(&self) -> Option<PathBuf> {
-        self.open_repo()?.workdir().map(Into::into)
     }
 
     fn hash_content(_repo: &Repository, content: &[u8]) -> Option<String> {
@@ -225,77 +226,6 @@ impl ForgeLanguageServer {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("forge-comment-"))
-    }
-
-    /// Publish diagnostics for all files in the HEAD tree that have comments.
-    async fn publish_all_diagnostics(&self) {
-        let Some(repo) = self.open_repo() else {
-            return;
-        };
-        let Some(workdir) = self.workdir() else {
-            return;
-        };
-
-        let blob_map = head_blob_map(&repo);
-
-        // Collect diagnostics grouped by relative path.
-        let mut diags_by_path: HashMap<String, Vec<Diagnostic>> = HashMap::new();
-        for (blob_oid, paths) in &blob_map {
-            let tcs = comments_for_blob(&repo, blob_oid);
-            if tcs.is_empty() {
-                continue;
-            }
-            let diagnostics: Vec<Diagnostic> = tcs.iter().map(diagnostic_for_comment).collect();
-            for path in paths {
-                diags_by_path
-                    .entry(path.clone())
-                    .or_default()
-                    .extend(diagnostics.clone());
-            }
-        }
-
-        // Publish and track which URIs we published to.
-        let mut current_uris = HashSet::new();
-        for (path, diagnostics) in &diags_by_path {
-            let abs = workdir.join(path);
-            if let Ok(uri) = Url::from_file_path(&abs) {
-                self.client
-                    .publish_diagnostics(uri.clone(), diagnostics.clone(), None)
-                    .await;
-                current_uris.insert(uri);
-            }
-        }
-
-        // Clear diagnostics for URIs that were previously published but no
-        // longer have any comments.
-        let previous = {
-            let mut published = self.published_uris.lock().expect("lock poisoned");
-            std::mem::replace(&mut *published, current_uris.clone())
-        };
-        for stale in previous.difference(&current_uris) {
-            self.client
-                .publish_diagnostics(stale.clone(), Vec::new(), None)
-                .await;
-        }
-    }
-
-    /// Publish diagnostics for a single file using its live (possibly dirty)
-    /// blob OID.
-    async fn publish_file_diagnostics(&self, uri: &Url) {
-        let Some(repo) = self.open_repo() else {
-            return;
-        };
-        let Some(content) = self.get_content(uri) else {
-            return;
-        };
-        let Some(blob_oid) = Self::hash_content(&repo, content.as_bytes()) else {
-            return;
-        };
-        let tcs = comments_for_blob(&repo, &blob_oid);
-        let diagnostics: Vec<Diagnostic> = tcs.iter().map(diagnostic_for_comment).collect();
-        self.client
-            .publish_diagnostics(uri.clone(), diagnostics, None)
-            .await;
     }
 
     async fn handle_forge_save(&self, path: &std::path::Path, text: Option<String>) {
@@ -360,45 +290,30 @@ impl ForgeLanguageServer {
                 self.client
                     .show_message(MessageType::ERROR, format!("forge: {msg}"))
                     .await;
-                return;
             }
         }
-
-        self.publish_all_diagnostics().await;
     }
 
     async fn open_unresolved_files(&self) {
         let Some(repo) = self.open_repo() else {
-            return;
-        };
-        let Some(workdir) = self.workdir() else {
+            self.client
+                .show_message(MessageType::ERROR, "forge: could not open repo")
+                .await;
             return;
         };
 
-        let blob_map: BTreeMap<String, Vec<String>> = head_blob_map(&repo).into_iter().collect();
-        let mut edits: Vec<DocumentChangeOperation> = Vec::new();
-        for (blob_oid, paths) in &blob_map {
-            let tcs = comments_for_blob(&repo, blob_oid);
-            let has_unresolved = tcs.iter().any(|tc| !tc.comment.resolved);
-            if !has_unresolved {
-                continue;
-            }
-            for path in paths {
-                let abs = workdir.join(path);
-                let Ok(uri) = Url::from_file_path(&abs) else {
-                    continue;
-                };
-                edits.push(DocumentChangeOperation::Edit(TextDocumentEdit {
-                    text_document: OptionalVersionedTextDocumentIdentifier { uri, version: None },
-                    edits: vec![OneOf::Left(TextEdit {
-                        range: Range::new(Position::new(0, 0), Position::new(0, 0)),
-                        new_text: String::new(),
-                    })],
-                }));
+        let blob_map = head_blob_map(&repo);
+        let mut paths: Vec<String> = Vec::new();
+        for (blob_oid, blob_paths) in &blob_map {
+            let has_unresolved = comments_for_blob(&repo, blob_oid)
+                .iter()
+                .any(|tc| !tc.comment.resolved);
+            if has_unresolved {
+                paths.extend(blob_paths.iter().cloned());
             }
         }
 
-        if edits.is_empty() {
+        if paths.is_empty() {
             self.client
                 .show_message(
                     MessageType::INFO,
@@ -408,12 +323,13 @@ impl ForgeLanguageServer {
             return;
         }
 
-        let _ = self
-            .client
-            .apply_edit(WorkspaceEdit {
-                document_changes: Some(DocumentChanges::Operations(edits)),
-                ..Default::default()
-            })
+        paths.sort();
+        let list = paths.join(", ");
+        self.client
+            .show_message(
+                MessageType::INFO,
+                format!("forge: unresolved comments in: {list}"),
+            )
             .await;
     }
 
@@ -483,6 +399,19 @@ fn render_thread_markdown(thread_id: &str, comments: &[Comment]) -> String {
         .iter()
         .filter_map(|c| c.replaces.as_deref())
         .collect();
+
+    if let Some(ctx) = comments
+        .iter()
+        .find(|c| c.context_lines.is_some())
+        .and_then(|c| c.context_lines.as_deref())
+    {
+        md.push_str("```\n");
+        md.push_str(ctx);
+        if !ctx.ends_with('\n') {
+            md.push('\n');
+        }
+        md.push_str("```\n\n");
+    }
 
     let mut first = true;
     for c in comments {
@@ -569,6 +498,7 @@ impl LanguageServer for ForgeLanguageServer {
                     },
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec![
@@ -589,7 +519,6 @@ impl LanguageServer for ForgeLanguageServer {
         self.client
             .log_message(MessageType::INFO, "forge-lsp initialized")
             .await;
-        self.publish_all_diagnostics().await;
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -597,10 +526,7 @@ impl LanguageServer for ForgeLanguageServer {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let uri = params.text_document.uri.clone();
         self.store_content(params.text_document.uri, params.text_document.text);
-
-        self.publish_file_diagnostics(&uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -621,10 +547,7 @@ impl LanguageServer for ForgeLanguageServer {
             return;
         }
         if let Some(text) = params.text {
-            let uri = params.text_document.uri.clone();
             self.store_content(params.text_document.uri, text);
-
-            self.publish_file_diagnostics(&uri).await;
         }
     }
 
@@ -668,6 +591,24 @@ impl LanguageServer for ForgeLanguageServer {
         }))
     }
 
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = &params.text_document.uri;
+        let Some(repo) = self.open_repo() else {
+            return Ok(None);
+        };
+        let Some(content) = self.get_content(uri) else {
+            return Ok(None);
+        };
+        let Some(blob_oid) = Self::hash_content(&repo, content.as_bytes()) else {
+            return Ok(None);
+        };
+        let hints = inlay_hints_for_blob(&repo, &blob_oid);
+        if hints.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(hints))
+    }
+
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let line = params.range.start.line;
         let end_line = params.range.end.line;
@@ -686,9 +627,13 @@ impl LanguageServer for ForgeLanguageServer {
         let mut actions: CodeActionResponse = Vec::new();
 
         let tcs = comments_for_blob(&repo, &blob_oid);
-        let has_unresolved = tcs.iter().any(|tc| !tc.comment.resolved);
 
-        if has_unresolved {
+        let repo_has_unresolved = head_blob_map(&repo).into_keys().any(|oid| {
+            comments_for_blob(&repo, &oid)
+                .iter()
+                .any(|tc| !tc.comment.resolved)
+        });
+        if repo_has_unresolved {
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "Open all files with unresolved comments".to_string(),
                 command: Some(Command {
@@ -844,8 +789,6 @@ impl LanguageServer for ForgeLanguageServer {
                     return Ok(None);
                 };
                 let _ = resolve_thread(&repo, thread_id, comment_oid, None, None);
-
-                self.publish_all_diagnostics().await;
             }
             _ => {}
         }
@@ -982,70 +925,34 @@ mod tests {
         assert!(md.contains("Answer"));
     }
 
-    // ── diagnostic_for_comment ──────────────────────────────────────────
+    // ── render_thread_markdown with context ──────────────────────────
 
     #[test]
-    fn diagnostic_unresolved_is_information() {
-        let c = make_comment(
-            "a".repeat(40).as_str(),
-            "Alice",
-            "Check this",
-            0,
-            Some(anchor(10, 12)),
-        );
-        let tc = ThreadComment {
-            thread_id: "tid-1".to_string(),
-            comment: c,
-        };
-        let d = diagnostic_for_comment(&tc);
-        assert_eq!(d.severity, Some(DiagnosticSeverity::INFORMATION));
-        assert_eq!(d.range.start.line, 9); // 1-based → 0-based
-        assert_eq!(d.range.end.line, 11);
-        assert_eq!(d.source.as_deref(), Some("forge"));
-        assert!(d.message.contains("Alice"));
-    }
-
-    #[test]
-    fn diagnostic_resolved_is_hint() {
+    fn hover_shows_context_lines() {
         let mut c = make_comment(
             "a".repeat(40).as_str(),
             "Alice",
-            "Done",
-            0,
-            Some(anchor(5, 5)),
+            "This is wrong",
+            1_700_000_000,
+            Some(anchor(5, 7)),
         );
-        c.resolved = true;
-        let tc = ThreadComment {
-            thread_id: "tid-2".to_string(),
-            comment: c,
-        };
-        let d = diagnostic_for_comment(&tc);
-        assert_eq!(d.severity, Some(DiagnosticSeverity::HINT));
+        c.context_lines = Some("fn foo() {\n    bar()\n}".to_string());
+
+        let md = render_thread_markdown("01234567-abcd", &[c]);
+        assert!(md.contains("```\nfn foo() {\n    bar()\n}\n```"));
+        assert!(md.contains("This is wrong"));
     }
 
     #[test]
-    fn diagnostic_no_anchor_defaults_to_line_zero() {
-        let c = make_comment("a".repeat(40).as_str(), "Alice", "General note", 0, None);
-        let tc = ThreadComment {
-            thread_id: "tid-3".to_string(),
-            comment: c,
-        };
-        let d = diagnostic_for_comment(&tc);
-        assert_eq!(d.range.start.line, 0);
-        assert_eq!(d.range.end.line, 0);
-    }
-
-    #[test]
-    fn diagnostic_thread_id_in_code() {
-        let c = make_comment("a".repeat(40).as_str(), "Alice", "Note", 0, None);
-        let tc = ThreadComment {
-            thread_id: "my-thread-id".to_string(),
-            comment: c,
-        };
-        let d = diagnostic_for_comment(&tc);
-        assert_eq!(
-            d.code,
-            Some(NumberOrString::String("my-thread-id".to_string()))
+    fn hover_no_context_when_absent() {
+        let c = make_comment(
+            "a".repeat(40).as_str(),
+            "Alice",
+            "General note",
+            1_700_000_000,
+            None,
         );
+        let md = render_thread_markdown("01234567-abcd", &[c]);
+        assert!(!md.contains("```"));
     }
 }
