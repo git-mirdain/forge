@@ -2579,22 +2579,55 @@ fn print_comment_node(c: &Comment, depth: usize, color: bool) {
     let short = &c.oid[..c.oid.len().min(8)];
     let ts = format_timestamp(c.timestamp);
 
+    // Build an optional anchor location string (e.g. "lines 5-7").
+    let anchor_loc: Option<String> = c.anchor.as_ref().and_then(|a| {
+        let start = a.start_line?;
+        Some(match a.end_line {
+            Some(end) if end != start => format!("lines {start}-{end}"),
+            _ => format!("line {start}"),
+        })
+    });
+
     if color {
         let dim = "\x1b[2m";
         let yellow = "\x1b[33m";
+        let cyan = "\x1b[36m";
         let reset = "\x1b[0m";
         let resolved = if c.resolved {
             format!("  {dim}[resolved]{reset}")
         } else {
             String::new()
         };
+        let loc = anchor_loc
+            .as_deref()
+            .map(|l| format!("  {cyan}{l}{reset}"))
+            .unwrap_or_default();
         println!(
-            "{indent}{dim}{short}{reset}  {yellow}{}{reset}  {dim}{ts}{reset}{resolved}",
+            "{indent}{dim}{short}{reset}  {yellow}{}{reset}  {dim}{ts}{reset}{loc}{resolved}",
             c.author_name
         );
     } else {
         let resolved = if c.resolved { "  [resolved]" } else { "" };
-        println!("{indent}{short}  {}  {ts}{resolved}", c.author_name);
+        let loc = anchor_loc
+            .as_deref()
+            .map(|l| format!("  {l}"))
+            .unwrap_or_default();
+        println!("{indent}{short}  {}  {ts}{loc}{resolved}", c.author_name);
+    }
+
+    if let Some(ctx) = c.context_lines.as_deref() {
+        if color {
+            let dim = "\x1b[2m";
+            let reset = "\x1b[0m";
+            for line in ctx.lines() {
+                println!("{indent}  {dim}│{reset} {line}");
+            }
+        } else {
+            for line in ctx.lines() {
+                println!("{indent}  │ {line}");
+            }
+        }
+        println!();
     }
 
     if !c.body.is_empty() {
